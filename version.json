@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Messenger/releases/tag/v1.0.2",
   "release_notes": "Automatic multi-file updater: app + installer/support files can now update together.",
   "files": {
