@@ -12,6 +12,7 @@ import math
 import re
 import shutil
 import io
+import hashlib
 import ssl
 import urllib.error
 import urllib.request
@@ -48,14 +49,19 @@ try:
 except Exception:
     cairosvg = None
 
+try:
+    import certifi
+except Exception:
+    certifi = None
+
 _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Messenger"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.0"
 # Optional default manifest URL baked into your build; usually leave empty and set
 # update_manifest_url in dental_messenger_config.json or CHAIRSIDE_UPDATE_MANIFEST_URL.
-UPDATE_MANIFEST_URL_BUILTIN = ""
+UPDATE_MANIFEST_URL_BUILTIN = "https://raw.githubusercontent.com/AyoDoood/Chairside-Messenger/main/version.json"
 DEFAULT_PORT = 50505
 DISCOVERY_PORT = 50506
 BEACON_INTERVAL = 2.5
@@ -92,13 +98,42 @@ def _fetch_update_manifest(url: str, timeout: float = 18.0) -> dict:
         url,
         headers={"User-Agent": f"{APP_TITLE.replace(' ', '-')}/{APP_VERSION}"},
     )
-    ctx = ssl.create_default_context()
+    ctx = _create_https_context()
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("Update manifest must be a JSON object.")
     return data
+
+
+def _download_bytes(url: str, timeout: float = 35.0) -> bytes:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"{APP_TITLE.replace(' ', '-')}/{APP_VERSION}"},
+    )
+    ctx = _create_https_context()
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        return resp.read()
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _create_https_context() -> ssl.SSLContext:
+    """
+    Build an HTTPS context that prefers certifi's CA bundle when available.
+
+    Some Python installs on Windows can have an incomplete trust store, which causes
+    CERTIFICATE_VERIFY_FAILED against GitHub even on valid certificates.
+    """
+    if certifi is not None:
+        try:
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            pass
+    return ssl.create_default_context()
 
 
 def _support_dir() -> str:
@@ -1191,6 +1226,7 @@ class DentalMessengerApp:
             pystray.MenuItem("Send Ready", self._tray_send_ready),
             pystray.MenuItem("Show Main Window", self._tray_show_main),
             pystray.MenuItem("Hide Main Window", self._tray_hide_main),
+            pystray.MenuItem("Check for Updates", self._tray_check_updates),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Close Chairside Messenger", self._tray_quit),
         )
@@ -1227,6 +1263,9 @@ class DentalMessengerApp:
 
     def _tray_hide_main(self, _icon, _item) -> None:
         self.queue.put(("tray_action", "hide_main"))
+
+    def _tray_check_updates(self, _icon, _item) -> None:
+        self.queue.put(("tray_action", "check_updates"))
 
     def _tray_quit(self, _icon, _item) -> None:
         self.queue.put(("tray_action", "quit"))
@@ -1322,6 +1361,8 @@ class DentalMessengerApp:
                 self._show_main_window()
             elif action == "hide_main":
                 self._hide_main_window()
+            elif action == "check_updates":
+                self._check_for_updates_clicked()
             elif action == "quit":
                 self._close_from_widget()
         except Exception as exc:
@@ -1430,14 +1471,33 @@ class DentalMessengerApp:
         menu.add_cascade(label="Layout", menu=layout_menu)
         self.root.config(menu=menu)
 
-    def _get_update_manifest_url(self) -> str:
+    def _manifest_url_candidates(self, base_url: str) -> list[str]:
+        base = str(base_url or "").strip()
+        if not base:
+            return []
+        urls = [base]
+        lower = base.lower()
+        if lower.endswith("/version.json"):
+            urls.append(base[:-len("/version.json")] + "/version.json.example")
+        elif lower.endswith(".json"):
+            urls.append(base + ".example")
+        # Preserve order but remove duplicates.
+        seen: set[str] = set()
+        out: list[str] = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+
+    def _get_update_manifest_urls(self) -> list[str]:
         env = os.environ.get("CHAIRSIDE_UPDATE_MANIFEST_URL", "").strip()
         if env:
-            return env
+            return self._manifest_url_candidates(env)
         cfg = str(self.config_store.data.get("update_manifest_url", "") or "").strip()
         if cfg:
-            return cfg
-        return str(UPDATE_MANIFEST_URL_BUILTIN or "").strip()
+            return self._manifest_url_candidates(cfg)
+        return self._manifest_url_candidates(str(UPDATE_MANIFEST_URL_BUILTIN or "").strip())
 
     def _check_for_updates_clicked(self) -> None:
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
@@ -1450,8 +1510,8 @@ class DentalMessengerApp:
                 pass
 
         try:
-            url = self._get_update_manifest_url()
-            if not url:
+            urls = self._get_update_manifest_urls()
+            if not urls:
                 ui(
                     lambda: messagebox.showinfo(
                         APP_TITLE,
@@ -1463,7 +1523,33 @@ class DentalMessengerApp:
                     )
                 )
                 return
-            manifest = _fetch_update_manifest(url)
+            manifest = None
+            used_url = ""
+            last_error: Optional[Exception] = None
+            for url in urls:
+                try:
+                    manifest = _fetch_update_manifest(url)
+                    used_url = url
+                    break
+                except urllib.error.HTTPError as exc:
+                    last_error = exc
+                    # Try fallback URL (e.g., version.json.example) on 404, otherwise stop.
+                    if exc.code != 404:
+                        raise
+                except urllib.error.URLError as exc:
+                    last_error = exc
+                    # Network errors could be transient; try next candidate.
+                    continue
+            if manifest is None:
+                if last_error is not None:
+                    raise last_error
+                raise ValueError("Could not load update manifest.")
+            if used_url and str(self.config_store.data.get("update_manifest_url", "") or "").strip() != used_url:
+                self.config_store.data["update_manifest_url"] = used_url
+                try:
+                    self.config_store.save()
+                except Exception:
+                    pass
             remote = str(manifest.get("version", "")).strip()
             if not remote:
                 raise ValueError('Manifest is missing a "version" field.')
@@ -1483,14 +1569,18 @@ class DentalMessengerApp:
                     )
                     if notes:
                         body += f"\n{notes}\n"
-                    if page:
-                        if messagebox.askyesno(APP_TITLE, body + "\nOpen the release page in your browser?"):
-                            webbrowser.open(page)
-                    else:
-                        messagebox.showinfo(
-                            APP_TITLE,
-                            body + "\n\nNo release_page_url in the manifest — add one to open a download page.",
-                        )
+                    if messagebox.askyesno(
+                        APP_TITLE,
+                        body + "\nInstall this update now (download + replace app file)?",
+                    ):
+                        threading.Thread(
+                            target=self._download_and_install_update_worker,
+                            args=(manifest, remote, page),
+                            daemon=True,
+                        ).start()
+                        return
+                    if page and messagebox.askyesno(APP_TITLE, "Open the release page in your browser instead?"):
+                        webbrowser.open(page)
                 elif cmp < 0:
                     messagebox.showinfo(
                         APP_TITLE,
@@ -1501,11 +1591,137 @@ class DentalMessengerApp:
 
             ui(present)
         except urllib.error.URLError as exc:
-            ui(lambda e=str(exc): messagebox.showerror(APP_TITLE, f"Update check failed (network):\n{e}"))
+            msg = str(exc)
+            if "CERTIFICATE_VERIFY_FAILED" in msg:
+                msg += (
+                    "\n\nTLS certificate verification failed.\n"
+                    "Try re-running the installer (it now installs certifi),\n"
+                    "or run:\n"
+                    f'  "{sys.executable}" -m pip install --user --upgrade certifi'
+                )
+            ui(lambda e=msg: messagebox.showerror(APP_TITLE, f"Update check failed (network):\n{e}"))
         except json.JSONDecodeError as exc:
             ui(lambda e=str(exc): messagebox.showerror(APP_TITLE, f"Update manifest is not valid JSON:\n{e}"))
         except Exception as exc:
             ui(lambda e=str(exc): messagebox.showerror(APP_TITLE, f"Update check failed:\n{e}"))
+
+    def _manifest_download_info(self, manifest: dict) -> tuple[str, str]:
+        """Return (download_url, sha256). Supports both flat and nested manifest formats."""
+        download_url = str(manifest.get("download_url", "") or "").strip()
+        sha256 = str(manifest.get("sha256", "") or "").strip()
+        if download_url:
+            return download_url, sha256
+        files = manifest.get("files")
+        if isinstance(files, dict):
+            dm = files.get("dental_messenger.py")
+            if isinstance(dm, dict):
+                download_url = str(dm.get("url", "") or "").strip()
+                sha256 = str(dm.get("sha256", "") or "").strip()
+        return download_url, sha256
+
+    def _download_and_install_update_worker(self, manifest: dict, remote_version: str, release_page_url: str) -> None:
+        def ui(fn):
+            try:
+                self.root.after(0, fn)
+            except tk.TclError:
+                pass
+
+        try:
+            download_url, expected_sha256 = self._manifest_download_info(manifest)
+            if not download_url:
+                def no_url() -> None:
+                    if release_page_url:
+                        if messagebox.askyesno(
+                            APP_TITLE,
+                            "This update manifest has no download_url for automatic install.\n\n"
+                            "Open the release page instead?",
+                        ):
+                            webbrowser.open(release_page_url)
+                    else:
+                        messagebox.showerror(
+                            APP_TITLE,
+                            "This update manifest has no download_url.\n"
+                            "Add download_url (and optional sha256) to enable automatic updates.",
+                        )
+                ui(no_url)
+                return
+
+            payload = _download_bytes(download_url)
+            if expected_sha256:
+                got = _sha256_hex(payload).lower()
+                expected = expected_sha256.lower()
+                if got != expected:
+                    raise ValueError(
+                        "Downloaded update hash mismatch.\n"
+                        f"Expected: {expected}\n"
+                        f"Received: {got}"
+                    )
+
+            target_path = os.path.abspath(__file__)
+            target_dir = os.path.dirname(target_path)
+            tmp_path = target_path + ".update.tmp"
+            backup_path = target_path + f".bak-{int(time.time())}"
+
+            with open(tmp_path, "wb") as f:
+                f.write(payload)
+
+            try:
+                os.replace(target_path, backup_path)
+                try:
+                    os.replace(tmp_path, target_path)
+                except Exception:
+                    # Roll back immediately if placing the new file fails.
+                    try:
+                        os.replace(backup_path, target_path)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+            def done() -> None:
+                if messagebox.askyesno(
+                    APP_TITLE,
+                    f"Update installed successfully.\n\n"
+                    f"Updated to: {remote_version}\n"
+                    f"Current file backup: {os.path.basename(backup_path)}\n\n"
+                    "Restart now to use the new version?",
+                ):
+                    self._restart_after_update(target_path, target_dir)
+            ui(done)
+        except urllib.error.URLError as exc:
+            msg = str(exc)
+            if "CERTIFICATE_VERIFY_FAILED" in msg:
+                msg += (
+                    "\n\nTLS certificate verification failed.\n"
+                    "Try re-running the installer (it now installs certifi),\n"
+                    "or run:\n"
+                    f'  "{sys.executable}" -m pip install --user --upgrade certifi'
+                )
+            ui(lambda e=msg: messagebox.showerror(APP_TITLE, f"Download failed (network):\n{e}"))
+        except Exception as exc:
+            ui(lambda e=str(exc): messagebox.showerror(APP_TITLE, f"Automatic update failed:\n{e}"))
+
+    def _restart_after_update(self, script_path: str, working_dir: str) -> None:
+        try:
+            self._persist_form()
+        except Exception:
+            pass
+        try:
+            subprocess.Popen([sys.executable, "-u", script_path], cwd=working_dir)
+        except Exception as exc:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Update installed, but automatic restart failed.\n\n"
+                f"Please launch Chairside Messenger again manually.\n\nDetails: {exc}",
+            )
+            return
+        self._quitting = True
+        self.on_close()
 
     def _rebuild_default_menu(self) -> None:
         if self._default_menu is None:
