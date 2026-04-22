@@ -58,7 +58,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Messenger"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.2"
 # Optional default manifest URL baked into your build; usually leave empty and set
 # update_manifest_url in dental_messenger_config.json or CHAIRSIDE_UPDATE_MANIFEST_URL.
 UPDATE_MANIFEST_URL_BUILTIN = "https://raw.githubusercontent.com/AyoDoood/Chairside-Messenger/main/version.json"
