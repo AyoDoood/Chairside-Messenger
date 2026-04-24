@@ -62,7 +62,7 @@ APP_TITLE = "Chairside Ready Alert"
 APP_VERSION = "1.0.4"
 # Optional default manifest URL baked into your build; usually leave empty and set
 # update_manifest_url in chairside_ready_alert_config.json or CHAIRSIDE_UPDATE_MANIFEST_URL.
-UPDATE_MANIFEST_URL_BUILTIN = "https://raw.githubusercontent.com/AyoDoood/Chairside-Ready-Alert/main/version.json"
+UPDATE_MANIFEST_URL_BUILTIN = "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/version.json"
 UPDATE_ALLOWED_FILES = {
     "chairside_ready_alert.py",
     "install_chairside_ready_alert.ps1",

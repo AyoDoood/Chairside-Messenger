@@ -1,32 +1,32 @@
 {
-  "version": "1.0.0",
-  "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/tag/v1.0.0",
-  "download_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/chairside_ready_alert.py",
+  "version": "1.0.4",
+  "release_page_url": "https://github.com/AyoDoood/chairside-ready-alert/releases/tag/v1.0.4",
+  "download_url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/chairside_ready_alert.py",
   "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_PY_FILE",
   "release_notes": "Short description of what changed (optional).",
   "files": {
     "chairside_ready_alert.py": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/chairside_ready_alert.py",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/chairside_ready_alert.py",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_PY_FILE"
     },
     "install_chairside_ready_alert.ps1": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/install_chairside_ready_alert.ps1",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/install_chairside_ready_alert.ps1",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_PS1_FILE"
     },
     "Install Chairside Ready Alert.bat": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/Install%20Chairside%20Ready%20Alert.bat",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/Install%20Chairside%20Ready%20Alert.bat",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_BAT_FILE"
     },
     "Install Chairside Ready Alert macOS.command": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/Install%20Chairside%20Ready%20Alert%20macOS.command",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/Install%20Chairside%20Ready%20Alert%20macOS.command",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_MAC_COMMAND_FILE"
     },
     "install_chairside_ready_alert_macos.sh": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/install_chairside_ready_alert_macos.sh",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/install_chairside_ready_alert_macos.sh",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_MAC_SH_FILE"
     },
     "README-Windows-One-Click.txt": {
-      "url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases/download/v1.0.0/README-Windows-One-Click.txt",
+      "url": "https://github.com/AyoDoood/chairside-ready-alert/releases/download/v1.0.4/README-Windows-One-Click.txt",
       "sha256": "OPTIONAL_SHA256_OF_DOWNLOADED_README_FILE"
     }
   }
