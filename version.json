@@ -1,7 +1,7 @@
 {
   "version": "1.0.4",
   "release_page_url": "https://github.com/AyoDoood/chairside-ready-alert/releases",
-  "release_notes": "Automatic multi-file updater: app + installer/support files can now update together.",
+  "release_notes": "Adds inline duplicate station-name warning and keeps Windows installer/Store docs aligned.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

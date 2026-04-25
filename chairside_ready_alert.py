@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import tkinter as tk
 import wave
 from datetime import datetime
@@ -37,13 +38,66 @@ if sys.platform == "win32":
 else:
     import fcntl
 
-try:
-    import pystray
-    from PIL import Image, ImageDraw
-except Exception:
-    pystray = None
-    Image = None
-    ImageDraw = None
+def _import_tray_modules() -> bool:
+    global pystray, Image, ImageDraw, _TRAY_IMPORT_ERROR
+    try:
+        import pystray as _pystray
+        from PIL import Image as _Image, ImageDraw as _ImageDraw
+
+        pystray = _pystray
+        Image = _Image
+        ImageDraw = _ImageDraw
+        _TRAY_IMPORT_ERROR = ""
+        return True
+    except Exception:
+        pystray = None
+        Image = None
+        ImageDraw = None
+        _TRAY_IMPORT_ERROR = traceback.format_exc()
+        return False
+
+
+def _attempt_macos_tray_dependency_repair() -> None:
+    if sys.platform != "darwin":
+        return
+    # Try to heal missing tray deps in the exact interpreter launching this app.
+    try:
+        env = os.environ.copy()
+        env["PYTHONNOUSERSITE"] = "1"
+        subprocess.run(
+            [sys.executable, "-s", "-m", "ensurepip", "--upgrade"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            timeout=90,
+            check=False,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-s",
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--upgrade",
+                "pystray",
+                "pillow",
+                "pyobjc-framework-Cocoa",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            timeout=180,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+if not _import_tray_modules() and sys.platform == "darwin":
+    _attempt_macos_tray_dependency_repair()
+    _import_tray_modules()
 
 try:
     import cairosvg
@@ -401,6 +455,7 @@ class ConfigStore:
             "theme": DEFAULT_THEME,
             "tray_visibility_help_shown": False,
             "update_manifest_url": "",
+            "autostart_enabled": True,
         }
         self.load()
 
@@ -1093,6 +1148,7 @@ class ChairsideReadyAlertApp:
         self._sync_after_id: Optional[str] = None
         self.local_ips = local_ipv4_addresses()
         self.online_labels: list[str] = []
+        self._duplicate_name_detected = False
         self.target_vars = {}
         self._target_signature = None
         self.local_ip = detect_local_ip()
@@ -1100,12 +1156,21 @@ class ChairsideReadyAlertApp:
         self._diag_lines: deque[str] = deque(maxlen=500)
         self._diag_win: Optional[tk.Toplevel] = None
         self._diag_text: Optional[tk.Text] = None
+        self._tray_diag_lines: deque[str] = deque(maxlen=300)
+        self._tray_diag_win: Optional[tk.Toplevel] = None
+        self._tray_diag_text: Optional[tk.Text] = None
         self._last_committed_label = ""
         self._default_menu: Optional[tk.Menu] = None
         self._default_menu_vars: dict[str, tk.BooleanVar] = {}
+        self._autostart_var = tk.BooleanVar(value=False)
         self._quitting = False
         self._main_hidden = False
         self._tray_icon = None
+        self._mac_status_item = None
+        self._mac_status_target = None
+        self._mac_app_delegate = None
+        self._mac_start_monotonic = time.monotonic()
+        self._tray_start_attempts = 0
         self._tray_enabled = pystray is not None and Image is not None and ImageDraw is not None
         self._focus_server_sock: Optional[socket.socket] = None
         self._cards: list[RoundedCard] = []
@@ -1124,9 +1189,13 @@ class ChairsideReadyAlertApp:
         self._build_menu()
         self._build_ui()
         self._load_config_into_form()
-        self._start_tray_icon()
+        self._sync_autostart_state()
+        # Delay tray startup on macOS until event loop/UI is settled; early startup can be flaky.
+        self.root.after(450, self._ensure_tray_icon_started)
         # Backup persistence: some Windows Tk builds are flaky on <<ComboboxSelected>> for readonly comboboxes.
         self.alert_sound_var.trace_add("write", lambda *_: self._persist_form())
+        if sys.platform == "darwin":
+            self._set_macos_app_icon()
         self.root.deiconify()
         if sys.platform == "darwin":
             self.root.lift()
@@ -1136,10 +1205,17 @@ class ChairsideReadyAlertApp:
         self.root.after(260, self._auto_start_network)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         if sys.platform == "darwin":
+            try:
+                # Keep app alive when the last window is closed on macOS.
+                self.root.tk.call("set", "::tk::mac::QuitOnLastWindowClosed", "0")
+                _append_startup_log("Set tk::mac::QuitOnLastWindowClosed=0")
+            except Exception as exc:
+                _append_startup_log(f"Could not set QuitOnLastWindowClosed: {exc}")
             # Clicking the Dock icon after closing the window (withdraw) fires <<Reopen>> on Aqua Tk.
             self.root.bind("<<Reopen>>", self._on_macos_dock_reopen)
             # Ensure Regular app (menus + Dock) on launch; Accessory is only used while hidden-to-tray.
             self.root.after(100, lambda: self._macos_set_activation_policy_for_main_window(True))
+            self._install_macos_app_delegate()
         self._start_focus_server()
         self.root.after(1500, self._maybe_prompt_windows_tray_visibility)
 
@@ -1228,11 +1304,42 @@ class ChairsideReadyAlertApp:
                     pass
 
     def _start_tray_icon(self) -> None:
+        self._record_tray_diag("Tray start requested.")
+        _append_startup_log("tray start requested")
+        if sys.platform == "darwin":
+            if self._start_macos_status_item():
+                self._record_tray_diag("Native macOS menu bar icon started.")
+                _append_startup_log("native macOS menu bar icon started")
+                return
+            self._append_diag("Native macOS menu bar icon unavailable; falling back to pystray.")
+            self._record_tray_diag("Native menu bar icon unavailable; trying pystray fallback.")
+            _append_startup_log("native macOS menu bar icon unavailable; fallback to pystray")
         if not self._tray_enabled or pystray is None:
-            self._append_diag("Tray icon unavailable (missing pystray/Pillow).")
+            detail = "pystray/Pillow imports unavailable."
+            if _TRAY_IMPORT_ERROR:
+                first_line = _TRAY_IMPORT_ERROR.strip().splitlines()[-1]
+                detail = f"{detail} {first_line}"
+            self._append_diag(f"Tray icon unavailable ({detail})")
+            self._record_tray_diag(f"Tray unavailable: {detail}")
+            _append_startup_log(f"tray unavailable: {detail}")
+            if sys.platform == "darwin":
+                self.root.after(
+                    300,
+                    lambda d=detail: messagebox.showwarning(
+                        APP_TITLE,
+                        "Menu bar icon could not start because tray dependencies are missing.\n\n"
+                        f"Details: {d}\n\n"
+                        "Run the macOS installer again to reinstall dependencies, then relaunch the app.",
+                    ),
+                )
             return
         if self._tray_icon is not None:
             return
+        def _show_tray_icon(icon) -> None:
+            try:
+                icon.visible = True
+            except Exception:
+                pass
         menu = pystray.Menu(
             pystray.MenuItem("Send Ready", self._tray_send_ready),
             # Default menu action maps to tray icon double-click on platforms that support it.
@@ -1250,14 +1357,216 @@ class ChairsideReadyAlertApp:
         )
         try:
             if sys.platform == "darwin":
-                self._tray_icon.run_detached()
+                # On macOS, pystray is most reliable when attached to the shared NSApplication.
+                # Fallback through detached/threaded variants for broader environment compatibility.
+                try:
+                    from AppKit import NSApplication  # type: ignore
+
+                    ns_app = NSApplication.sharedApplication()
+                    self._tray_icon.run_detached(setup=_show_tray_icon, darwin_nsapplication=ns_app)
+                except Exception as exc_nsapp:
+                    self._append_diag(
+                        f"Tray icon NSApplication mode failed on macOS; retrying fallback modes: {exc_nsapp}"
+                    )
+                    try:
+                        self._tray_icon.run_detached(setup=_show_tray_icon)
+                    except Exception as exc_detached:
+                        self._append_diag(
+                            f"Tray icon detached mode failed on macOS; retrying threaded mode: {exc_detached}"
+                        )
+                        threading.Thread(target=lambda: self._tray_icon.run(setup=_show_tray_icon), daemon=True).start()
             else:
-                threading.Thread(target=self._tray_icon.run, daemon=True).start()
+                threading.Thread(target=lambda: self._tray_icon.run(setup=_show_tray_icon), daemon=True).start()
         except Exception as exc:
             self._append_diag(f"Tray icon failed to start: {exc}")
+            self._record_tray_diag(f"Tray failed to start: {exc}")
+            _append_startup_log(f"tray icon failed to start: {exc}")
             self._tray_icon = None
+            if sys.platform == "darwin":
+                self.root.after(
+                    300,
+                    lambda e=str(exc): messagebox.showwarning(
+                        APP_TITLE,
+                        "Could not start the macOS menu bar icon.\n\n"
+                        f"Details: {e}\n\n"
+                        "Open Settings > Connection log... for diagnostics.",
+                    ),
+                )
+
+    def _ensure_tray_icon_started(self) -> None:
+        if self._quitting:
+            return
+        if self._mac_status_item is not None or self._tray_icon is not None:
+            return
+        self._tray_start_attempts += 1
+        self._record_tray_diag(f"Tray startup attempt {self._tray_start_attempts}.")
+        _append_startup_log(f"tray startup attempt {self._tray_start_attempts}")
+        self._start_tray_icon()
+        if (self._mac_status_item is None and self._tray_icon is None and self._tray_start_attempts < 6):
+            self.root.after(900, self._ensure_tray_icon_started)
+
+    def _start_macos_status_item(self) -> bool:
+        if sys.platform != "darwin":
+            return False
+        if self._mac_status_item is not None:
+            return True
+        try:
+            import objc  # type: ignore
+            from Foundation import NSObject  # type: ignore
+            from AppKit import NSMenu, NSMenuItem, NSStatusBar, NSVariableStatusItemLength  # type: ignore
+
+            # Log activation policy so we can see whether the process is registered
+            # as a GUI app (0=Regular, 1=Accessory, 2=Prohibited).  Status items
+            # silently fail when policy is Prohibited.
+            try:
+                from AppKit import NSApplication, NSApplicationActivationPolicyAccessory  # type: ignore
+                _ns = NSApplication.sharedApplication()
+                _ns.finishLaunching()
+                _pol = _ns.activationPolicy()
+                self._record_tray_diag(f"NSApp policy at status-item creation: {_pol}  (0=Regular 1=Accessory 2=Prohibited)")
+                if _pol == 2:  # Prohibited → force Accessory so item can render
+                    _r = _ns.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                    self._record_tray_diag(f"Forced Accessory policy (was Prohibited): {_r}")
+            except Exception as _pe:
+                self._record_tray_diag(f"NSApp policy check error: {_pe}")
+
+            app = self
+
+            class _TrayTarget(NSObject):
+                def initWithApp_(self, app_ref):
+                    self = objc.super(_TrayTarget, self).init()
+                    if self is None:
+                        return None
+                    self._app = app_ref
+                    return self
+
+                def sendReady_(self, _sender):
+                    self._app.queue.put(("tray_action", "send_ready"))
+
+                def showMain_(self, _sender):
+                    self._app.queue.put(("tray_action", "show_main"))
+
+                def hideMain_(self, _sender):
+                    self._app.queue.put(("tray_action", "hide_main"))
+
+                def checkUpdates_(self, _sender):
+                    self._app.queue.put(("tray_action", "check_updates"))
+
+                def quitApp_(self, _sender):
+                    self._app.queue.put(("tray_action", "quit"))
+
+            target = _TrayTarget.alloc().initWithApp_(app)
+            # NSSquareStatusItemLength uses a proper square icon slot — the modern
+            # macOS approach.  NSVariableStatusItemLength + text silently fails to
+            # render on macOS 16 even though all API calls succeed.
+            from AppKit import NSImage, NSSquareStatusItemLength  # type: ignore
+            from Foundation import NSData  # type: ignore
+            status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSSquareStatusItemLength)
+            button = status_item.button()
+            if button is not None:
+                # Build a template NSImage from the PIL icon so the button has content.
+                _img_set = False
+                try:
+                    pil_img = self._create_tray_icon_image()
+                    if pil_img is not None:
+                        _buf = io.BytesIO()
+                        pil_img.save(_buf, format="PNG")
+                        _data = NSData.dataWithBytes_length_(_buf.getvalue(), len(_buf.getvalue()))
+                        _ns_img = NSImage.alloc().initWithData_(_data)
+                        if _ns_img is not None:
+                            _ns_img.setTemplate_(True)
+                            button.setImage_(_ns_img)
+                            _img_set = True
+                            self._record_tray_diag("Native status item button: image set (template).")
+                except Exception as exc_img:
+                    self._record_tray_diag(f"Image set failed ({exc_img}); falling back to text.")
+                if not _img_set:
+                    button.setTitle_("R")
+                    self._record_tray_diag("Native status item button: title='R' (text fallback).")
+                button.setToolTip_(APP_TITLE)
+            else:
+                # button() returned None — deprecated fallback.
+                self._record_tray_diag("Native status item button() returned None; trying setTitle_ fallback.")
+                try:
+                    status_item.setTitle_("R")
+                    status_item.setLength_(34.0)
+                    self._record_tray_diag("setTitle_ fallback applied.")
+                except Exception as exc_t:
+                    self._record_tray_diag(f"setTitle_ fallback also failed: {exc_t}")
+
+            menu = NSMenu.alloc().init()
+
+            item_send = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Send Ready", "sendReady:", "")
+            item_send.setTarget_(target)
+            menu.addItem_(item_send)
+
+            item_show = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Show Main Window", "showMain:", "")
+            item_show.setTarget_(target)
+            menu.addItem_(item_show)
+
+            item_hide = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Hide Main Window", "hideMain:", "")
+            item_hide.setTarget_(target)
+            menu.addItem_(item_hide)
+
+            item_updates = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Check for Updates", "checkUpdates:", "")
+            item_updates.setTarget_(target)
+            menu.addItem_(item_updates)
+
+            menu.addItem_(NSMenuItem.separatorItem())
+
+            item_quit = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Close Chairside Ready Alert", "quitApp:", "")
+            item_quit.setTarget_(target)
+            menu.addItem_(item_quit)
+
+            status_item.setMenu_(menu)
+            self._mac_status_item = status_item
+            self._mac_status_target = target
+            self._record_tray_diag("Native status item configured (visible + menu attached).")
+            self._record_tray_diag("Native status item attached to system status bar.")
+            # Force the menu bar to render the new item immediately, then keep it
+            # alive with periodic pumping.  Tkinter's mainloop drives NSApp events
+            # but doesn't automatically drain NSRunLoop sources that AppKit uses to
+            # paint status items.
+            try:
+                from Foundation import NSRunLoop, NSDate  # type: ignore
+                NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
+            except Exception:
+                pass
+            self.root.after(200, self._pump_macos_runloop)
+            return True
+        except Exception as exc:
+            self._append_diag(f"Native macOS menu bar icon failed: {exc}")
+            self._record_tray_diag(f"Native macOS menu bar icon failed: {exc}")
+            _append_startup_log(f"native macOS menu bar icon failed: {exc}")
+            return False
+
+    def _pump_macos_runloop(self) -> None:
+        """Drive the AppKit run loop so the menu-bar status item stays rendered.
+
+        Tkinter's mainloop processes NSApp events but doesn't guarantee the
+        NSRunLoop sources that repaint status items are drained.  Running the
+        loop for 0 s is non-blocking and safe to call on every Tk tick.
+        """
+        if sys.platform != "darwin" or self._quitting or self._mac_status_item is None:
+            return
+        try:
+            from Foundation import NSRunLoop, NSDate  # type: ignore
+            NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.0))
+        except Exception:
+            pass
+        if not self._quitting and self._mac_status_item is not None:
+            self.root.after(200, self._pump_macos_runloop)
 
     def _stop_tray_icon(self) -> None:
+        if sys.platform == "darwin" and self._mac_status_item is not None:
+            try:
+                from AppKit import NSStatusBar  # type: ignore
+
+                NSStatusBar.systemStatusBar().removeStatusItem_(self._mac_status_item)
+            except Exception:
+                pass
+            self._mac_status_item = None
+            self._mac_status_target = None
         icon = self._tray_icon
         self._tray_icon = None
         if not icon:
@@ -1367,6 +1676,7 @@ class ChairsideReadyAlertApp:
 
     def _dispatch_tray_action(self, action: str) -> None:
         try:
+            self._record_tray_diag(f"Tray action requested: {action}")
             if action == "send_ready":
                 self._send_ready_from_widget()
             elif action == "show_main":
@@ -1379,6 +1689,7 @@ class ChairsideReadyAlertApp:
                 self._close_from_widget()
         except Exception as exc:
             self._append_diag(f"Tray action failed ({action}): {exc}")
+            self._record_tray_diag(f"Tray action failed ({action}): {exc}")
 
     def _show_main_window(self) -> None:
         self._main_hidden = False
@@ -1394,6 +1705,88 @@ class ChairsideReadyAlertApp:
         if self._quitting:
             return
         self._show_main_window()
+
+    def _install_macos_app_delegate(self) -> None:
+        if sys.platform != "darwin":
+            return
+        try:
+            import objc  # type: ignore
+            from Foundation import NSObject  # type: ignore
+            from AppKit import NSApplication  # type: ignore
+
+            app_ref = self
+
+            class _AppDelegate(NSObject):
+                def initWithApp_(self, app_obj):
+                    self = objc.super(_AppDelegate, self).init()
+                    if self is None:
+                        return None
+                    self._app = app_obj
+                    return self
+
+                # Called when Dock icon is clicked while app is running.
+                def applicationShouldHandleReopen_hasVisibleWindows_(self, _sender, _flag):
+                    try:
+                        # Queue to Tk thread; avoid touching Tk from Cocoa callback context.
+                        self._app.queue.put(("focus_request", None))
+                    except Exception:
+                        pass
+                    return True
+
+            delegate = _AppDelegate.alloc().initWithApp_(app_ref)
+            NSApplication.sharedApplication().setDelegate_(delegate)
+            self._mac_app_delegate = delegate  # prevent GC
+            self._record_tray_diag("Installed macOS app delegate for Dock reopen.")
+            _append_startup_log("Installed macOS app delegate for Dock reopen.")
+        except Exception as exc:
+            self._append_diag(f"Could not install macOS Dock reopen delegate: {exc}")
+            _append_startup_log(f"Could not install macOS Dock reopen delegate: {exc}")
+
+    def _set_macos_app_icon(self) -> None:
+        """Set the Dock icon from Logo.svg, overriding Python.app's rocket ship."""
+        if sys.platform != "darwin":
+            return
+        try:
+            from AppKit import NSApplication, NSImage  # type: ignore
+            from Foundation import NSData  # type: ignore
+            base = _support_dir()
+            img = None
+            for name in ("Logo.svg", "logo.svg"):
+                path = os.path.join(base, name)
+                if not os.path.isfile(path):
+                    continue
+                if cairosvg is not None:
+                    try:
+                        png_bytes = cairosvg.svg2png(url=path, output_width=512, output_height=512)
+                        data = NSData.dataWithBytes_length_(png_bytes, len(png_bytes))
+                        img = NSImage.alloc().initWithData_(data)
+                    except Exception:
+                        pass
+                if img is None:
+                    try:
+                        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                        tmp.close()
+                        subprocess.run(
+                            ["sips", "-s", "format", "png", path, "--out", tmp.name],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+                        )
+                        img = NSImage.alloc().initWithContentsOfFile_(tmp.name)
+                        os.unlink(tmp.name)
+                    except Exception:
+                        pass
+                if img is not None:
+                    break
+            if img is None:
+                for name in ("Logo.png", "logo.png"):
+                    path = os.path.join(base, name)
+                    if os.path.isfile(path):
+                        img = NSImage.alloc().initWithContentsOfFile_(path)
+                        if img is not None:
+                            break
+            if img is not None:
+                NSApplication.sharedApplication().setApplicationIconImage_(img)
+        except Exception:
+            pass
 
     def _macos_set_activation_policy_for_main_window(self, visible: bool) -> None:
         """Dock + application menu bar need Regular; hide Dock tile when window is withdrawn to tray (Accessory)."""
@@ -1463,10 +1856,17 @@ class ChairsideReadyAlertApp:
     def _build_menu(self) -> None:
         menu = tk.Menu(self.root)
         settings_menu = tk.Menu(menu, tearoff=0)
+        settings_menu.add_checkbutton(
+            label="Start automatically at login",
+            variable=self._autostart_var,
+            command=self._toggle_autostart_from_menu,
+        )
+        settings_menu.add_separator()
         settings_menu.add_command(label="Network Settings...", command=self._open_network_settings_window)
         settings_menu.add_command(label="Connection log...", command=self._open_connection_log_window)
         settings_menu.add_command(label="Check for updates...", command=self._check_for_updates_clicked)
         settings_menu.add_command(label="Windows Tray Icon Setup...", command=self._show_windows_tray_help)
+        settings_menu.add_command(label="Tray diagnostics...", command=self._open_tray_diagnostics_window)
         settings_menu.add_separator()
         settings_menu.add_command(label="Send Ready (Tray)", command=self._send_ready_from_widget)
         settings_menu.add_command(label="Stop Network", command=self.stop_network)
@@ -1482,6 +1882,178 @@ class ChairsideReadyAlertApp:
             )
         menu.add_cascade(label="Layout", menu=layout_menu)
         self.root.config(menu=menu)
+
+    def _autostart_windows_bat_path(self) -> str:
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            startup_dir = os.path.join(appdata, "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+        else:
+            startup_dir = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+        return os.path.join(startup_dir, "Start Chairside Ready Alert.bat")
+
+    def _autostart_macos_plist_path(self) -> str:
+        return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents", "com.chairside.readyalert.autostart.plist")
+
+    def _is_autostart_enabled(self) -> bool:
+        if sys.platform == "darwin":
+            return os.path.isfile(self._autostart_macos_plist_path())
+        if sys.platform.startswith("win"):
+            return os.path.isfile(self._autostart_windows_bat_path())
+        return False
+
+    def _sync_autostart_state(self) -> None:
+        # Default for fresh installs: enable autostart automatically once.
+        if "autostart_enabled" not in self.config_store.data:
+            ok, _msg = self._set_autostart_enabled(True)
+            self.config_store.data["autostart_enabled"] = bool(ok)
+            self.config_store.save()
+        desired = bool(self.config_store.data.get("autostart_enabled", True))
+        current = self._is_autostart_enabled()
+        if desired != current:
+            ok, _msg = self._set_autostart_enabled(desired)
+            if ok:
+                current = self._is_autostart_enabled()
+        enabled = current
+        self._autostart_var.set(enabled)
+        self.config_store.data["autostart_enabled"] = bool(enabled)
+        self.config_store.save()
+
+    def _set_autostart_enabled(self, enabled: bool) -> tuple[bool, str]:
+        try:
+            if sys.platform.startswith("win"):
+                bat_path = self._autostart_windows_bat_path()
+                startup_dir = os.path.dirname(bat_path)
+                if enabled:
+                    os.makedirs(startup_dir, exist_ok=True)
+                    script_path = os.path.join(_support_dir(), "chairside_ready_alert.py")
+                    py = sys.executable
+                    pyw = py
+                    if os.path.basename(py).lower() == "python.exe":
+                        candidate = os.path.join(os.path.dirname(py), "pythonw.exe")
+                        if os.path.isfile(candidate):
+                            pyw = candidate
+                    content = (
+                        "@echo off\n"
+                        f'cd /d "{_support_dir()}"\n'
+                        f'"{pyw}" "{script_path}"\n'
+                    )
+                    with open(bat_path, "w", encoding="ascii", errors="ignore") as f:
+                        f.write(content)
+                else:
+                    try:
+                        os.remove(bat_path)
+                    except FileNotFoundError:
+                        pass
+                return True, "Windows startup setting updated."
+
+            if sys.platform == "darwin":
+                plist_path = self._autostart_macos_plist_path()
+                launch_agents = os.path.dirname(plist_path)
+                if enabled:
+                    os.makedirs(launch_agents, exist_ok=True)
+                    script_path = os.path.join(_support_dir(), "chairside_ready_alert.py")
+                    py = sys.executable
+                    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chairside.readyalert.autostart</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{py}</string>
+    <string>-s</string>
+    <string>-u</string>
+    <string>{script_path}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{_support_dir()}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{os.path.join(_support_dir(), "startup_log.txt")}</string>
+  <key>StandardErrorPath</key>
+  <string>{os.path.join(_support_dir(), "shortcut_stderr.txt")}</string>
+</dict>
+</plist>
+"""
+                    with open(plist_path, "w", encoding="utf-8") as f:
+                        f.write(plist)
+                else:
+                    try:
+                        os.remove(plist_path)
+                    except FileNotFoundError:
+                        pass
+                return True, "macOS login item setting updated."
+
+            return False, "Autostart is supported only on Windows and macOS."
+        except Exception as exc:
+            return False, str(exc)
+
+    def _toggle_autostart_from_menu(self) -> None:
+        wanted = bool(self._autostart_var.get())
+        ok, msg = self._set_autostart_enabled(wanted)
+        if not ok:
+            self._autostart_var.set(self._is_autostart_enabled())
+            messagebox.showerror(APP_TITLE, f"Could not update startup setting:\n{msg}")
+            return
+        self._autostart_var.set(self._is_autostart_enabled())
+        self.config_store.data["autostart_enabled"] = bool(self._autostart_var.get())
+        self.config_store.save()
+        self._append_diag(msg)
+
+    def _record_tray_diag(self, text: str) -> None:
+        line = f"{now_str()}  {text}"
+        self._tray_diag_lines.append(line)
+        if self._tray_diag_text is not None and self._tray_diag_text.winfo_exists():
+            self._tray_diag_text.configure(state="normal")
+            self._tray_diag_text.insert("end", line + "\n")
+            self._tray_diag_text.see("end")
+            self._tray_diag_text.configure(state="disabled")
+
+    def _open_tray_diagnostics_window(self) -> None:
+        if self._tray_diag_win is not None and self._tray_diag_win.winfo_exists():
+            self._tray_diag_win.lift()
+            self._tray_diag_win.focus_force()
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Tray diagnostics")
+        win.geometry("700x360")
+        win.transient(self.root)
+        frame = ttk.Frame(win, padding=8)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Tray/menu bar status and fallback controls.",
+            style="Subtitle.TLabel",
+        ).pack(anchor="w", pady=(0, 6))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill="x", pady=(0, 6))
+        ttk.Button(btn_row, text="Retry Tray Start", command=self._ensure_tray_icon_started).pack(side="left")
+        ttk.Button(btn_row, text="Show Main", command=self._show_main_window).pack(side="left", padx=(6, 0))
+        ttk.Button(btn_row, text="Hide Main", command=self._hide_main_window).pack(side="left", padx=(6, 0))
+        ttk.Button(btn_row, text="Send Ready", command=self._send_ready_from_widget).pack(side="left", padx=(6, 0))
+        ttk.Button(btn_row, text="Check Updates", command=self._check_for_updates_clicked).pack(side="left", padx=(6, 0))
+
+        text = tk.Text(frame, height=14, wrap="word", font=_ui_font(9))
+        scroll = ttk.Scrollbar(frame, command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        for line in self._tray_diag_lines:
+            text.insert("end", line + "\n")
+        text.see("end")
+        text.configure(state="disabled")
+
+        def on_close() -> None:
+            self._tray_diag_win = None
+            self._tray_diag_text = None
+            win.destroy()
+
+        self._tray_diag_win = win
+        self._tray_diag_text = text
+        win.protocol("WM_DELETE_WINDOW", on_close)
 
     def _manifest_url_candidates(self, base_url: str) -> list[str]:
         base = str(base_url or "").strip()
@@ -1908,6 +2480,9 @@ class ChairsideReadyAlertApp:
             )
         if hasattr(self, "status_label"):
             self.status_label.configure(fg=theme["status"], bg=card, font=_ui_font(9, "bold"))
+        if hasattr(self, "duplicate_name_label"):
+            warn_color = "#b45309" if self._duplicate_name_detected else theme["sub"]
+            self.duplicate_name_label.configure(fg=warn_color, bg=card, font=_ui_font(8))
         if hasattr(self, "_ready_wrap"):
             self._ready_wrap.configure(bg=card)
         if hasattr(self, "_ready_center"):
@@ -1969,6 +2544,17 @@ class ChairsideReadyAlertApp:
         self.label_combo.bind("<<ComboboxSelected>>", self._on_station_label_selected)
         self.label_combo.bind("<FocusOut>", self._on_station_label_focus_out)
         self.label_combo.bind("<Return>", self._on_station_label_focus_out)
+        self.duplicate_name_var = tk.StringVar(value="")
+        self.duplicate_name_label = tk.Label(
+            left,
+            textvariable=self.duplicate_name_var,
+            fg=t["sub"],
+            bg=cbg,
+            font=_ui_font(8),
+            anchor="w",
+            justify="left",
+        )
+        self.duplicate_name_label.pack(anchor="w", pady=(4, 0))
 
         ttk.Label(left, text="Alert Sound:", style="Card.TLabel").pack(anchor="w", pady=(12, 2))
         sound_row = tk.Frame(left, bg=cbg)
@@ -2211,6 +2797,38 @@ class ChairsideReadyAlertApp:
         if self._network_running:
             self.stop_network()
             self.start_network()
+        else:
+            self._set_duplicate_name_warning(False)
+
+    def _set_duplicate_name_warning(self, is_duplicate: bool) -> None:
+        self._duplicate_name_detected = bool(is_duplicate)
+        if not hasattr(self, "duplicate_name_var"):
+            return
+        if self._duplicate_name_detected:
+            self.duplicate_name_var.set("Another computer may be using the same station name.")
+        else:
+            self.duplicate_name_var.set("")
+        if hasattr(self, "duplicate_name_label"):
+            t = self._current_theme
+            warn_color = "#b45309" if self._duplicate_name_detected else t["sub"]
+            self.duplicate_name_label.configure(fg=warn_color, bg=t["card_bg"], font=_ui_font(8))
+
+    def _refresh_duplicate_name_warning(self, snap: dict[str, dict], now: float) -> None:
+        if not self._network_running:
+            self._set_duplicate_name_warning(False)
+            return
+        me = self.label_var.get().strip()
+        if not me:
+            self._set_duplicate_name_warning(False)
+            return
+        duplicate_seen = False
+        for _ip, info in snap.items():
+            if now - float(info.get("last_seen", 0)) > PEER_STALE_SEC:
+                continue
+            if str(info.get("label", "")).strip() == me:
+                duplicate_seen = True
+                break
+        self._set_duplicate_name_warning(duplicate_seen)
 
     def _apply_default_target_selection(self, force: bool = False) -> None:
         if self.config_store.data.get("default_targets"):
@@ -2391,6 +3009,7 @@ class ChairsideReadyAlertApp:
         me = self.label_var.get().strip()
         udp = self._udp_labels_from_snap(snap, now)
         self.online_labels = sorted(l for l in udp if l != me)
+        self._refresh_duplicate_name_warning(snap, now)
         # Send targets: only stations currently seen online (same as online_labels)
         self._refresh_target_checkboxes(self.online_labels)
         self._apply_default_target_selection(force=False)
@@ -2425,6 +3044,7 @@ class ChairsideReadyAlertApp:
         self.discovery = LanDiscovery(label, port, self.local_ips, self.queue)
         self.discovery.start()
         self._network_running = True
+        self._set_duplicate_name_warning(False)
         self._persist_form()
         self._append_diag(f"LAN mode: label={label}, port={port}, discovery UDP:{DISCOVERY_PORT}")
         self._schedule_sync_loop()
@@ -2444,6 +3064,7 @@ class ChairsideReadyAlertApp:
             self.server.stop()
             self.server = None
         self._network_running = False
+        self._set_duplicate_name_warning(False)
         self._refresh_lan_status_banner()
         self._append_diag("Network stopped.")
 
@@ -2684,9 +3305,23 @@ class ChairsideReadyAlertApp:
             pass
 
     def on_close(self) -> None:
-        if not self._quitting and self._tray_icon is not None:
-            self._hide_main_window()
-            return
+        if not self._quitting:
+            if sys.platform == "darwin":
+                # macOS: hide the app via NSApplication so Dock click reopens the same
+                # running process (no relaunch feel, no separate minimized tile).
+                self._main_hidden = True
+                self._macos_set_activation_policy_for_main_window(True)
+                try:
+                    from AppKit import NSApplication  # type: ignore
+
+                    NSApplication.sharedApplication().hide_(None)
+                except Exception:
+                    # Fallback for environments where AppKit hide is unavailable.
+                    self.root.iconify()
+                return
+            if self._tray_icon is not None:
+                self._hide_main_window()
+                return
         try:
             self._persist_form()
         except Exception:
@@ -2731,18 +3366,33 @@ def _notify_existing_instance_focus() -> bool:
 
 def main() -> None:
     _append_startup_log("starting main()")
-    lock = SingleInstanceLock(os.path.join(_user_data_dir(), INSTANCE_LOCK_FILE))
+    lock_path = os.path.join(_user_data_dir(), INSTANCE_LOCK_FILE)
+    lock = SingleInstanceLock(lock_path)
     if not lock.acquire():
         _append_startup_log("Second launch blocked by single-instance lock.")
-        if not _notify_existing_instance_focus():
+        if _notify_existing_instance_focus():
+            return
+        # If focus notify fails, lock may be stale after an unclean shutdown.
+        _append_startup_log("Focus notify failed; attempting stale-lock recovery.")
+        try:
+            os.remove(lock_path)
+            _append_startup_log("Removed stale instance lock; retrying acquire.")
+        except OSError:
+            _append_startup_log("Stale-lock removal failed; showing already-running message.")
             _show_already_running_message()
-        return
+            return
+        lock = SingleInstanceLock(lock_path)
+        if not lock.acquire():
+            _append_startup_log("Re-acquire after stale-lock cleanup failed; showing already-running message.")
+            _show_already_running_message()
+            return
     root = tk.Tk()
     try:
         _append_startup_log("Tk() created, building app")
         ChairsideReadyAlertApp(root)
         _append_startup_log("entering mainloop()")
         root.mainloop()
+        _append_startup_log("mainloop exited")
     finally:
         lock.release()
 

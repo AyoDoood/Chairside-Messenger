@@ -1,5 +1,15 @@
 Chairside Ready Alert - One-Click Install (Windows + macOS)
 
+License / ownership notice:
+- This software and project branding are proprietary to Fieldcrest Dental PC unless otherwise stated.
+- Third-party components and license summary: see THIRD_PARTY_NOTICES.md in this repository.
+- For license/permission requests: support@fieldcrestdental.com
+
+Safety / intended-use notice:
+- This app is an operational convenience messaging tool only.
+- Not intended for emergencies, life-safety alerts, patient monitoring, or clinical decision support.
+- Always maintain independent clinical and emergency communication procedures.
+
 Main behavior after install:
 - No fixed server IP or subnet: works with any typical LAN addresses (192.168.1.x, 192.168.5.x, 10.x.x.x, etc.) — each PC listens and finds others via UDP discovery on the same Wi-Fi / Ethernet segment.
 - Every computer runs the same app (Windows or Mac); give each machine a unique station name on the main screen under Station Setup (e.g. Room 1, Doctor). There is no separate first-run wizard.
@@ -13,6 +23,7 @@ Main behavior after install:
 - Default targets can be configured per workstation via the Default menu.
 - Incoming messages bring the main window to front + blink + sound (no extra popup windows).
 - Quick Ready access is in the system tray/menu bar icon ("R"): use it to send Ready, show/hide main window, or close the app.
+- If two computers use the same station name, a small inline warning appears under Station name to help avoid target-list confusion.
 
 Where settings are saved (station name, alert sound, volume, theme, etc.):
 - Windows: %LOCALAPPDATA%\ChairsideReadyAlert\chairside_ready_alert_config.json

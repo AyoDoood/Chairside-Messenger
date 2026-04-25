@@ -11,6 +11,7 @@ This Privacy Policy explains how Chairside Ready Alert ("the App", "we", "our", 
 - The App does not require user accounts and does not sell personal data.
 - Most data stays on your device and on your local network.
 - The App does not include third-party analytics or advertising SDKs.
+- The App is not an emergency notification, life-safety, patient-monitoring, or clinical decision-support system.
 
 ## 2. Information We Process
 

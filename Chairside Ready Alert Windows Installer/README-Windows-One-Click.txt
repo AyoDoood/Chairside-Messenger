@@ -1,5 +1,15 @@
 Chairside Ready Alert - One-Click Install (Windows + macOS)
 
+License / ownership notice:
+- This software and project branding are proprietary to Fieldcrest Dental PC unless otherwise stated.
+- Third-party components and license summary: see THIRD_PARTY_NOTICES.md in the main project repository.
+- For license/permission requests: support@fieldcrestdental.com
+
+Safety / intended-use notice:
+- This app is an operational convenience messaging tool only.
+- Not intended for emergencies, life-safety alerts, patient monitoring, or clinical decision support.
+- Always maintain independent clinical and emergency communication procedures.
+
 Main behavior after install:
 - No fixed server IP or subnet: works with any typical LAN addresses (192.168.1.x, 192.168.5.x, 10.x.x.x, etc.) — each PC listens and finds others via UDP discovery on the same Wi-Fi / Ethernet segment.
 - Every computer runs the same app (Windows or Mac); give each machine a unique label (e.g. Room 1, Doctor).
@@ -12,12 +22,13 @@ Main behavior after install:
 - Alert volume slider is available per workstation.
 - Default targets can be configured per workstation via the Default menu.
 - Incoming messages bring the main window to front + blink + sound (no extra popup windows).
+- If two computers use the same station name, a small inline warning appears under Station name to help avoid target-list confusion.
 
 Windows install files:
 - Install Chairside Ready Alert.bat
 - install_chairside_ready_alert.ps1
 - chairside_ready_alert.py
-- python-3.11.9-amd64.exe  (download from python.org if not included)
+- python-3.12.8-amd64.exe  (download from python.org if not included)
 
 Windows install steps:
 1) Put all Windows install files in one folder.

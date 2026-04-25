@@ -15,6 +15,7 @@ chmod +x \
 SOURCE_PY="$SCRIPT_DIR/chairside_ready_alert.py"
 INSTALL_DIR="$HOME/Library/Application Support/ChairsideReadyAlert"
 DESKTOP_APP="$HOME/Desktop/Chairside Ready Alert.app"
+BUNDLE_VERSION="$(date +%s)"
 
 # Official python.org macOS universal2 installer — includes Tcl/Tk (Tkinter works).
 # Bump these when you refresh the bundled/offline package name in docs.
@@ -291,23 +292,6 @@ case "$py_report" in
     echo "Warning: Expected ${PY_MM}.x from python.org — if the app fails, install Python ${PY_FULL} or run this installer again."
     ;;
 esac
-echo "Installing / verifying app dependencies (pystray, pillow, cairosvg, certifi) ..."
-if ! "$PYTHON3" -m pip install --disable-pip-version-check --user --upgrade pystray pillow cairosvg certifi >/dev/null 2>&1; then
-  echo "Warning: could not install pystray/pillow/cairosvg/certifi; app may still run with reduced features."
-fi
-
-if "$PYTHON3" -c "from AppKit import NSApplication" >/dev/null 2>&1; then
-  echo "pyobjc-framework-Cocoa: already present."
-else
-  echo "pyobjc-framework-Cocoa not found — installing (macOS Dock + menu bar integration) ..."
-  if ! "$PYTHON3" -m pip install --disable-pip-version-check --user --upgrade pyobjc-framework-Cocoa; then
-    echo "Warning: could not install pyobjc-framework-Cocoa."
-    echo "         Install manually: \"$PYTHON3\" -m pip install --user pyobjc-framework-Cocoa"
-  elif ! "$PYTHON3" -c "from AppKit import NSApplication" >/dev/null 2>&1; then
-    echo "Warning: pyobjc-framework-Cocoa installed but AppKit import still failed."
-  fi
-fi
-
 echo "Installing app to: $INSTALL_DIR"
 
 mkdir -p "$INSTALL_DIR"
@@ -329,28 +313,104 @@ for support in \
     cp -f "$SCRIPT_DIR/$support" "$INSTALL_DIR/$support"
   fi
 done
+
+# Create app-local runtime env so menu-bar deps are always available to the launcher.
+VENV_DIR="$INSTALL_DIR/.runtime-venv"
+echo "Creating app runtime environment..."
+if ! "$PYTHON3" -m venv "$VENV_DIR" >/dev/null 2>&1; then
+  echo "Warning: could not create app-local virtual environment; falling back to system Python."
+  RUNTIME_PY="$PYTHON3"
+else
+  RUNTIME_PY="$VENV_DIR/bin/python3"
+fi
+
+echo "Bootstrapping pip in runtime environment..."
+"$RUNTIME_PY" -m ensurepip --upgrade >/dev/null 2>&1 || true
+if ! "$RUNTIME_PY" -m pip --version >/dev/null 2>&1; then
+  echo "Error: pip is unavailable for runtime Python: $RUNTIME_PY"
+  echo "Cannot install tray dependencies."
+  exit 1
+fi
+"$RUNTIME_PY" -m pip install --disable-pip-version-check --upgrade pip >/dev/null 2>&1 || true
+
+echo "Installing core runtime dependencies (pystray, pillow, cairosvg, certifi) ..."
+if ! "$RUNTIME_PY" -m pip install --disable-pip-version-check --upgrade pystray pillow cairosvg certifi; then
+  echo "Error: failed to install core runtime dependencies."
+  exit 1
+fi
+
+echo "Installing macOS bridge dependency (pyobjc-framework-Cocoa) ..."
+if ! "$RUNTIME_PY" -m pip install --disable-pip-version-check --upgrade pyobjc-framework-Cocoa; then
+  echo "Warning: could not install pyobjc-framework-Cocoa."
+  echo "         Menu bar integration may be limited on some systems."
+fi
+
+if "$RUNTIME_PY" -c "from AppKit import NSApplication" >/dev/null 2>&1; then
+  echo "pyobjc-framework-Cocoa: already present."
+else
+  echo "pyobjc-framework-Cocoa not found — installing (macOS Dock + menu bar integration) ..."
+  if ! "$RUNTIME_PY" -m pip install --disable-pip-version-check --upgrade pyobjc-framework-Cocoa; then
+    echo "Warning: could not install pyobjc-framework-Cocoa."
+    echo "         Install manually: \"$RUNTIME_PY\" -m pip install pyobjc-framework-Cocoa"
+  elif ! "$RUNTIME_PY" -c "from AppKit import NSApplication" >/dev/null 2>&1; then
+    echo "Warning: pyobjc-framework-Cocoa installed but AppKit import still failed."
+  fi
+fi
+
+echo "Verifying runtime tray imports..."
+if PYTHONNOUSERSITE=1 "$RUNTIME_PY" -s - <<'PY' >/dev/null 2>&1
+import pystray
+from PIL import Image, ImageDraw
+from AppKit import NSApplication
+PY
+then
+  echo "Tray runtime imports: OK"
+else
+  echo "Warning: tray runtime import check failed for: $RUNTIME_PY"
+  echo "         Run this to inspect manually:"
+  echo "         \"$RUNTIME_PY\" -c \"import pystray; from PIL import Image, ImageDraw; from AppKit import NSApplication\""
+  echo "Error: tray dependencies are not healthy in runtime environment."
+  exit 1
+fi
+
 printf '%s\n' "$PYTHON3" > "$INSTALL_DIR/python_interpreter_path.txt"
 printf '%s\n' "$PY_FULL" > "$INSTALL_DIR/python_expected_version.txt"
 printf '%s\n' "$py_report" > "$INSTALL_DIR/python_installed_version.txt"
+printf '%s\n' "$RUNTIME_PY" > "$INSTALL_DIR/python_runtime_path.txt"
 
-# Desktop .app: always exec the framework bin/python3 (or chosen PYTHON3) with -u — no "open",
-# no Python.app/MacOS/Python (those caused flash-quit and inconsistent behavior).
-LAUNCH_BIN="$PYTHON3"
-case "$PYTHON3" in
-  "${PYORG_HOME}/bin/"*)
-    LAUNCH_BIN="$PYORG_PYTHON3"
-    ;;
-esac
+# Use app-local runtime Python so Dock icon stays tied to this app bundle
+# (launching Python.app binary directly causes the Python rocketship Dock icon).
+VENV_SITE_PKGS="${VENV_DIR}/lib/python${PY_MM}/site-packages"
+LAUNCH_BIN="$RUNTIME_PY"
 printf '%s\n' "$LAUNCH_BIN" > "$INSTALL_DIR/python_desktop_launcher_path.txt"
 
 # Remove older Desktop launchers from previous installs (avoid duplicates).
 rm -f "$HOME/Desktop/Chairside Ready Alert.command"
 rm -rf "$HOME/Desktop/Chairside Ready Alert Shortcut.app"
-rm -rf "$DESKTOP_APP"
+if [[ -d "$DESKTOP_APP" ]]; then
+  # Ensure old app bundle is fully closed before replacement.
+  osascript >/dev/null 2>&1 <<'OSA' || true
+tell application "System Events"
+  set appName to "Chairside Ready Alert"
+  if exists (application process appName) then
+    try
+      tell application appName to quit
+    end try
+  end if
+end tell
+OSA
+  sleep 0.4
+  rm -rf "$DESKTOP_APP" 2>/dev/null || true
+  if [[ -d "$DESKTOP_APP" ]]; then
+    mv -f "$DESKTOP_APP" "${DESKTOP_APP}.old.$(date +%s)" 2>/dev/null || true
+  fi
+fi
 
 # Minimal .app bundle: double-click shows a normal app icon (no Terminal window).
-APP_MACOS="$DESKTOP_APP/Contents/MacOS"
-APP_RES="$DESKTOP_APP/Contents/Resources"
+TMP_DESKTOP_APP="${DESKTOP_APP}.tmp.$$"
+rm -rf "$TMP_DESKTOP_APP" 2>/dev/null || true
+APP_MACOS="$TMP_DESKTOP_APP/Contents/MacOS"
+APP_RES="$TMP_DESKTOP_APP/Contents/Resources"
 mkdir -p "$APP_MACOS" "$APP_RES"
 
 generate_chairside_icns() {
@@ -409,10 +469,21 @@ generate_icns_from_svg() {
   src_png="$tmp_dir/source.png"
   mkdir -p "$iconset" || { rm -rf "$tmp_dir"; return 1; }
 
-  # sips can rasterize SVG on macOS.
-  if ! sips -s format png "$svg_path" --out "$src_png" >/dev/null 2>&1; then
-    rm -rf "$tmp_dir"
-    return 1
+  # cairosvg handles viewBox-only SVGs correctly; sips silently produces a blank
+  # or grid image when width/height attributes are missing (macOS 16+).
+  if ! _CAIROSVG_SRC="$svg_path" _CAIROSVG_DST="$src_png" _CAIROSVG_SITE="$VENV_SITE_PKGS" \
+       "$RUNTIME_PY" -c "
+import os, sys
+sys.path.insert(0, os.environ['_CAIROSVG_SITE'])
+import cairosvg
+cairosvg.svg2png(url=os.environ['_CAIROSVG_SRC'], output_width=1024, output_height=1024,
+                 write_to=os.environ['_CAIROSVG_DST'])
+" 2>/dev/null; then
+    # Fall back to sips if cairosvg is unavailable.
+    if ! sips -s format png "$svg_path" --out "$src_png" >/dev/null 2>&1; then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
   fi
 
   for s in 16 32 64 128 256 512; do
@@ -454,8 +525,11 @@ generate_icns_from_svg() {
   echo '  fi'
   echo 'done'
   echo 'unset PYTHONHOME 2>/dev/null || true'
+  echo 'unset PYTHONPATH 2>/dev/null || true'
+  echo 'export PYTHONNOUSERSITE=1'
   echo 'export PYTHONUNBUFFERED=1'
   echo 'export TK_SILENCE_DEPRECATION=1'
+  echo 'export PYTHONEXECUTABLE="$0"'
   case "$PYTHON3" in
     "${PYORG_HOME}/bin/"*)
       printf 'export PYTHONEXECUTABLE=%q\n' "${PYORG_HOME}/bin/python3"
@@ -463,8 +537,19 @@ generate_icns_from_svg() {
   esac
   printf 'cd %q\n' "$INSTALL_DIR"
   printf 'LOG=%q\n' "$INSTALL_DIR/shortcut_stderr.txt"
+  printf 'LOCK=%q\n' "$INSTALL_DIR/chairside_messenger.instance.lock"
   echo '{ date; echo "Chairside Ready Alert — errors: shortcut_stderr.txt and startup_log.txt"; } >>"$LOG" 2>/dev/null || true'
-  printf 'exec %q -u chairside_ready_alert.py 2>>"$LOG"\n' "$LAUNCH_BIN"
+  echo '# Recover from stale single-instance lock left by crash/forced close.'
+  echo 'if [[ -f "$LOCK" ]] && ! pgrep -f "chairside_ready_alert.py" >/dev/null 2>&1; then'
+  echo '  rm -f "$LOCK" 2>/dev/null || true'
+  echo 'fi'
+  printf 'if ! %q -s -u chairside_ready_alert.py 2>>"$LOG"; then\n' "$LAUNCH_BIN"
+  echo '  # If log redirection or launcher path fails, retry without redirection.'
+  printf '  if ! %q -s -u chairside_ready_alert.py; then\n' "$LAUNCH_BIN"
+  echo '    # Final fallback: app-local runtime python (venv).'
+  printf '    %q -s -u chairside_ready_alert.py\n' "$RUNTIME_PY"
+  echo '  fi'
+  echo 'fi'
 } > "$APP_MACOS/launcher"
 chmod +x "$APP_MACOS/launcher"
 
@@ -508,7 +593,7 @@ fi
   echo '  <key>CFBundleExecutable</key>'
   echo '  <string>launcher</string>'
   echo '  <key>CFBundleIdentifier</key>'
-  echo '  <string>com.chairside.messenger</string>'
+  echo '  <string>com.chairside.readyalert</string>'
   echo '  <key>CFBundleName</key>'
   echo '  <string>Chairside Ready Alert</string>'
   echo '  <key>CFBundleDisplayName</key>'
@@ -524,10 +609,18 @@ fi
   if [[ -n "$ICON_DST" && -f "$ICON_DST" ]]; then
     echo '  <key>CFBundleIconFile</key>'
     echo '  <string>AppIcon</string>'
+    echo '  <key>CFBundleIconName</key>'
+    echo '  <string>AppIcon</string>'
   fi
+  echo '  <key>CFBundleVersion</key>'
+  echo '  <string>'"$BUNDLE_VERSION"'</string>'
   echo '</dict>'
   echo '</plist>'
-} > "$DESKTOP_APP/Contents/Info.plist"
+} > "$TMP_DESKTOP_APP/Contents/Info.plist"
+
+# Replace Desktop app bundle atomically to avoid stale icon metadata on reinstall.
+rm -rf "$DESKTOP_APP" 2>/dev/null || true
+mv -f "$TMP_DESKTOP_APP" "$DESKTOP_APP"
 
 echo ""
 echo "Install complete."
@@ -536,4 +629,30 @@ echo ""
 echo "Launching Chairside Ready Alert..."
 open "$DESKTOP_APP"
 echo "Done."
-read -rp "Press Enter to close this window... " _
+
+# Auto-close installer terminal window after successful launch.
+if [[ "${TERM_PROGRAM:-}" == "Apple_Terminal" ]]; then
+  ( sleep 0.6
+    osascript >/dev/null 2>&1 <<'OSA' || true
+tell application "Terminal"
+  if (count of windows) > 0 then
+    try
+      close front window
+    end try
+  end if
+end tell
+OSA
+  ) &
+elif [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+  ( sleep 0.6
+    osascript >/dev/null 2>&1 <<'OSA' || true
+tell application "iTerm2"
+  try
+    if current window exists then
+      close current window
+    end if
+  end try
+end tell
+OSA
+  ) &
+fi

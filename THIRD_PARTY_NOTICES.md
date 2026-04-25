@@ -1,0 +1,28 @@
+# Third-Party Notices
+
+This project includes or depends on third-party software. License obligations should be reviewed before commercial distribution.
+
+## Project-Owned Assets
+
+- `Logo.svg` - custom project logo used for app/tray icon generation.
+- Program-generated alert sounds are synthesized at runtime from code-defined frequencies; no third-party audio files are bundled.
+
+## Python Dependencies Used by the App/Installers
+
+- Python (PSF License)
+- Tk/Tkinter (Tcl/Tk license via Python distribution)
+- `pystray` (LGPL-3.0)
+- `Pillow` (HPND-style Pillow license)
+- `cairosvg` (LGPL-3.0)
+- `certifi` (MPL-2.0)
+
+## Packaging/Build Tools
+
+- `PyInstaller` (GPL-2.0-or-later with bootloader exception)
+
+## Maintainer Notes
+
+1. Keep this file updated when adding/removing dependencies.
+2. Keep attribution/license texts as required by each dependency.
+3. Confirm that all custom assets (logo/icons/branding) are owned by the publisher or properly licensed.
+4. If any third-party image/audio/font is added in the future, document origin and license here before release.
