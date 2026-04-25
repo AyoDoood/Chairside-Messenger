@@ -102,6 +102,28 @@ alert
 
 ---
 
+## Store listing → Applicable license terms
+
+You have two options here. Either works for Partner Center.
+
+**Option A (recommended): paste a URL**
+```
+https://ayodoood.github.io/Chairside-Ready-Alert/EULA.html
+```
+Cleaner, easier to update later (edit `EULA.md` in the repo, push, the URL serves the new version).
+
+**Option B: paste the full EULA text**
+Copy the body of `EULA.md` (between the frontmatter and the closing
+italic disclaimer). It's ~6,500 characters, comfortably under
+Partner Center's 10,000-char limit.
+
+> ⚠️ The EULA is a starter template. Have a healthcare-IT attorney
+> review before you ship — particularly the safety carve-out, the
+> governing-law placeholder, and any HIPAA/HITECH considerations
+> that apply to your jurisdiction.
+
+---
+
 ## Store listing → Developer-defined info
 
 | Field | Value |
