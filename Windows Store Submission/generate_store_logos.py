@@ -46,8 +46,10 @@ SIZES = [
     (310, 150, "store-logo-310x150.png", "wide tile"),
     (310, 310, "store-logo-310x310.png", "large tile"),
     (620, 300, "store-promo-620x300.png", "promotional banner"),
+    (720, 1080, "store-poster-720x1080.png", "2:3 portrait poster art"),
     (1080, 1080, "store-promo-1080x1080.png", "high-res square promotional"),
     (1240, 600, "store-hero-1240x600.png", "hero image (Partner Center optional)"),
+    (1440, 2160, "store-poster-1440x2160.png", "2:3 portrait poster art @2x"),
 ]
 
 BACKGROUND = (255, 255, 255, 255)  # opaque white — Store-friendly across themes
@@ -89,9 +91,10 @@ def main() -> int:
         if width == height:
             img = render_square_png(src, width)
         else:
-            # Render the logo at the canvas height so it sits centered
-            # on a white background of (width × height).
-            logo = render_square_png(src, height)
+            # Render the logo at min(w, h) so it always fits in the canvas
+            # regardless of orientation (landscape OR portrait).
+            logo_size = min(width, height)
+            logo = render_square_png(src, logo_size)
             img = make_canvas(width, height, logo)
         img.save(target, "PNG", optimize=True)
         print(f"  {width:>4}×{height:<4}  {name:<32}  ({purpose})")
