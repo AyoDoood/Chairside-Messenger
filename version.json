@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4",
+  "version": "1.0.5",
   "release_page_url": "https://github.com/AyoDoood/chairside-ready-alert/releases",
-  "release_notes": "Adds inline duplicate station-name warning and keeps Windows installer/Store docs aligned.",
+  "release_notes": "Fixes auto-update SSL certificate error on macOS caused by a broken launcher that hid the runtime venv from Python.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

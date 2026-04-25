@@ -529,12 +529,9 @@ cairosvg.svg2png(url=os.environ['_CAIROSVG_SRC'], output_width=1024, output_heig
   echo 'export PYTHONNOUSERSITE=1'
   echo 'export PYTHONUNBUFFERED=1'
   echo 'export TK_SILENCE_DEPRECATION=1'
-  echo 'export PYTHONEXECUTABLE="$0"'
-  case "$PYTHON3" in
-    "${PYORG_HOME}/bin/"*)
-      printf 'export PYTHONEXECUTABLE=%q\n' "${PYORG_HOME}/bin/python3"
-      ;;
-  esac
+  # Do not set PYTHONEXECUTABLE — it overrides sys.executable and breaks venv
+  # site-packages discovery, so certifi/pystray/pillow are not importable and
+  # auto-update fails with CERTIFICATE_VERIFY_FAILED.
   printf 'cd %q\n' "$INSTALL_DIR"
   printf 'LOG=%q\n' "$INSTALL_DIR/shortcut_stderr.txt"
   printf 'LOCK=%q\n' "$INSTALL_DIR/chairside_messenger.instance.lock"
