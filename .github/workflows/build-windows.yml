@@ -1,0 +1,56 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            python-arch: x64
+          - arch: x86
+            runner: windows-latest
+            python-arch: x86
+          - arch: arm64
+            runner: windows-11-arm
+            python-arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (${{ matrix.python-arch }})
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.python-arch }}
+
+      - name: Verify interpreter architecture
+        shell: pwsh
+        run: |
+          python -c "import platform, sys; print('arch:', platform.architecture()); print('machine:', platform.machine()); print('exe:', sys.executable)"
+
+      - name: Build EXE
+        shell: pwsh
+        working-directory: Windows Store Submission
+        run: |
+          .\build_windows_exe.ps1 -PythonExe python
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChairsideReadyAlert-${{ matrix.arch }}
+          path: Windows Store Submission/dist/ChairsideReadyAlert/
+          if-no-files-found: error
