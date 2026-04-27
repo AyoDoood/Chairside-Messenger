@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -462,6 +462,10 @@ class ConfigStore:
             # launch after upgrade, migrated from DEFAULT_LABELS + custom_station_labels.
             # See ChairsideReadyAlertApp._effective_station_labels.
             "station_labels": [],
+            # Tombstones for station_labels. Persisted across restarts so a label that
+            # this workstation removed isn't silently resurrected by another peer's
+            # beacon. An explicit Add (here or remotely) clears the tombstone.
+            "removed_labels": [],
             "default_targets": [],
             "theme": DEFAULT_THEME,
             "tray_visibility_help_shown": False,
@@ -530,12 +534,40 @@ class LanDiscovery:
         self.lock = threading.Lock()
         self._b_sock: Optional[socket.socket] = None
         self._l_sock: Optional[socket.socket] = None
+        # Shared station-label state piggybacked on the beacon. The App sets these
+        # via update_station_lists; LanDiscovery reads them when sending each beacon.
+        self._station_labels: list[str] = []
+        self._removed_labels: list[str] = []
 
     def update_label(self, label: str) -> None:
         self.label = label.strip() or "Room 1"
 
     def update_tcp_port(self, port: int) -> None:
         self.tcp_port = port
+
+    def update_station_lists(self, labels: list[str], removed: list[str]) -> None:
+        with self.lock:
+            self._station_labels = list(labels)
+            self._removed_labels = list(removed)
+
+    def broadcast_label_event(self, action: str, label: str) -> None:
+        """Send an immediate UDP broadcast announcing an add/remove of a station label."""
+        if action not in ("add", "remove"):
+            return
+        sock = self._b_sock
+        if sock is None:
+            return
+        try:
+            payload = json.dumps({
+                "type": "label_event",
+                "v": BEACON_VERSION,
+                "action": action,
+                "label": str(label),
+                "ts": time.time(),
+            }).encode("utf-8")
+            sock.sendto(payload, ("255.255.255.255", DISCOVERY_PORT))
+        except Exception:
+            pass
 
     def start(self) -> None:
         self.running = True
@@ -586,16 +618,24 @@ class LanDiscovery:
     def _broadcast_loop(self) -> None:
         while self.running and self._b_sock:
             try:
+                with self.lock:
+                    labels_snap = list(self._station_labels)
+                    removed_snap = list(self._removed_labels)
                 payload = json.dumps(
                     {
                         "type": "dm_beacon",
                         "v": BEACON_VERSION,
                         "label": self.label,
                         "tcp": self.tcp_port,
+                        # Eventual-consistency snapshot so newly-online peers
+                        # converge on the same shared list without needing every
+                        # add/remove event to have been received.
+                        "labels": labels_snap,
+                        "removed": removed_snap,
                     }
                 ).encode("utf-8")
-                if len(payload) > 1200:
-                    break
+                # 1500 bytes is the typical Ethernet MTU; UDP fragmentation across
+                # a single LAN is fine, so don't bail above 1200 — just send.
                 self._b_sock.sendto(payload, ("255.255.255.255", DISCOVERY_PORT))
             except Exception:
                 pass
@@ -605,7 +645,7 @@ class LanDiscovery:
         assert self._l_sock is not None
         while self.running:
             try:
-                data, addr = self._l_sock.recvfrom(2048)
+                data, addr = self._l_sock.recvfrom(8192)
             except socket.timeout:
                 continue
             except OSError:
@@ -617,16 +657,33 @@ class LanDiscovery:
                 obj = json.loads(data.decode("utf-8", errors="ignore"))
             except json.JSONDecodeError:
                 continue
-            if obj.get("type") != "dm_beacon" or int(obj.get("v", 0)) != BEACON_VERSION:
+            if int(obj.get("v", 0)) != BEACON_VERSION:
                 continue
-            label = str(obj.get("label", "")).strip() or "Unknown"
-            try:
-                tcp = int(obj.get("tcp", DEFAULT_PORT))
-            except (TypeError, ValueError):
-                tcp = DEFAULT_PORT
-            with self.lock:
-                self.peers[ip] = {"label": label, "tcp": tcp, "last_seen": time.time()}
-            self.ui_queue.put(("discovery", None))
+            msg_type = obj.get("type")
+            if msg_type == "dm_beacon":
+                label = str(obj.get("label", "")).strip() or "Unknown"
+                try:
+                    tcp = int(obj.get("tcp", DEFAULT_PORT))
+                except (TypeError, ValueError):
+                    tcp = DEFAULT_PORT
+                with self.lock:
+                    self.peers[ip] = {"label": label, "tcp": tcp, "last_seen": time.time()}
+                self.ui_queue.put(("discovery", None))
+                # Optional shared-list snapshot. Older peers (pre-1.0.10) won't include
+                # these fields; they're treated as empty and don't advertise removals.
+                inc_labels = obj.get("labels")
+                inc_removed = obj.get("removed")
+                if isinstance(inc_labels, list) or isinstance(inc_removed, list):
+                    self.ui_queue.put((
+                        "labels_snapshot",
+                        ([str(x) for x in (inc_labels or [])],
+                         [str(x) for x in (inc_removed or [])]),
+                    ))
+            elif msg_type == "label_event":
+                action = str(obj.get("action", "")).lower()
+                label = str(obj.get("label", "")).strip()
+                if action in ("add", "remove") and label:
+                    self.ui_queue.put(("label_event", (action, label)))
 
     def prune_stale(self, max_age: float = PEER_STALE_SEC) -> None:
         now = time.time()
@@ -2421,6 +2478,9 @@ class ChairsideReadyAlertApp:
             pass
         return list(seeded)
 
+    def _removed_station_labels(self) -> list[str]:
+        return [str(x) for x in (self.config_store.data.get("removed_labels", []) or [])]
+
     def _set_station_labels(self, labels: list[str]) -> None:
         """Persist a new station_labels list and refresh main-window UI that depends on it."""
         cleaned: list[str] = []
@@ -2433,7 +2493,116 @@ class ChairsideReadyAlertApp:
             cleaned.append(name)
         self.config_store.data["station_labels"] = cleaned
         self.config_store.save()
+        self._sync_discovery_label_state()
         self._refresh_station_label_widgets()
+
+    def _set_removed_labels(self, removed: list[str]) -> None:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in removed:
+            name = str(raw).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            cleaned.append(name)
+        self.config_store.data["removed_labels"] = cleaned
+        self.config_store.save()
+        self._sync_discovery_label_state()
+
+    def _sync_discovery_label_state(self) -> None:
+        """Push current station_labels + removed_labels to LanDiscovery so the next
+        beacon carries the latest snapshot for newly-online peers."""
+        if getattr(self, "discovery", None) is None:
+            return
+        try:
+            self.discovery.update_station_lists(
+                self._effective_station_labels(),
+                self._removed_station_labels(),
+            )
+        except Exception:
+            pass
+
+    def _broadcast_label_event(self, action: str, label: str) -> None:
+        if getattr(self, "discovery", None) is None:
+            return
+        try:
+            self.discovery.broadcast_label_event(action, label)
+        except Exception:
+            pass
+
+    def _merge_remote_labels_snapshot(self, inc_labels: list[str], inc_removed: list[str]) -> None:
+        """A peer sent its current labels + tombstones. Honor remote tombstones
+        (apply them locally) and only adopt remote labels we haven't tombstoned
+        ourselves."""
+        my_labels = self._effective_station_labels()
+        my_removed = self._removed_station_labels()
+        my_labels_set = set(my_labels)
+        my_removed_set = set(my_removed)
+        labels_changed = False
+        removed_changed = False
+        # Remote tombstones — propagate.
+        for name in inc_removed:
+            if not name:
+                continue
+            if name in my_labels_set:
+                my_labels = [l for l in my_labels if l != name]
+                my_labels_set.discard(name)
+                labels_changed = True
+            if name not in my_removed_set:
+                my_removed.append(name)
+                my_removed_set.add(name)
+                removed_changed = True
+        # Remote additions — adopt unless we have a local tombstone.
+        for name in inc_labels:
+            if not name or name in my_removed_set or name in my_labels_set:
+                continue
+            my_labels.append(name)
+            my_labels_set.add(name)
+            labels_changed = True
+        if removed_changed:
+            self._set_removed_labels(my_removed)
+        if labels_changed:
+            self._set_station_labels(my_labels)
+
+    def _apply_remote_label_event(self, action: str, label: str) -> None:
+        """Immediate add/remove from a peer's broadcast — applies right away."""
+        labels = self._effective_station_labels()
+        removed = self._removed_station_labels()
+        if action == "add":
+            changed_r = False
+            if label in removed:
+                removed = [l for l in removed if l != label]
+                changed_r = True
+            changed_l = False
+            if label not in labels:
+                labels.append(label)
+                changed_l = True
+            if changed_r:
+                self._set_removed_labels(removed)
+            if changed_l:
+                self._set_station_labels(labels)
+        elif action == "remove":
+            current = self.label_var.get().strip() if hasattr(self, "label_var") else ""
+            if label == current:
+                # Don't let a remote remove orphan this workstation's own station name.
+                return
+            changed_l = False
+            if label in labels:
+                labels = [l for l in labels if l != label]
+                changed_l = True
+            changed_r = False
+            if label not in removed:
+                removed.append(label)
+                changed_r = True
+            if changed_r:
+                self._set_removed_labels(removed)
+            if changed_l:
+                self._set_station_labels(labels)
+            # Also drop from default_targets locally.
+            defaults = list(self.config_store.data.get("default_targets", []) or [])
+            if label in defaults:
+                self.config_store.data["default_targets"] = [d for d in defaults if d != label]
+                self.config_store.save()
 
     def _refresh_station_label_widgets(self) -> None:
         """Update the Station name combobox values and the Defaults menu after the
@@ -2555,12 +2724,18 @@ class ChairsideReadyAlertApp:
                                     parent=win)
                 entry.focus_set()
                 return
+            # Explicit Add overrides any local tombstone for this name.
+            removed = self._removed_station_labels()
+            if name in removed:
+                self._set_removed_labels([r for r in removed if r != name])
             labels.append(name)
             self._set_station_labels(labels)
             listbox.insert("end", name)
             entry_var.set("")
             _update_add_state()
             entry.focus_set()
+            # Tell every other workstation immediately. Beacons will reinforce.
+            self._broadcast_label_event("add", name)
         add_btn.configure(command=_do_add)
         entry.bind("<Return>", lambda _e: _do_add())
 
@@ -2582,6 +2757,12 @@ class ChairsideReadyAlertApp:
             if name in labels:
                 labels.remove(name)
                 self._set_station_labels(labels)
+            # Persist a local tombstone so a peer's beacon does not silently bring
+            # this label back. The remove event also tells peers to tombstone.
+            removed = self._removed_station_labels()
+            if name not in removed:
+                removed.append(name)
+                self._set_removed_labels(removed)
             # Also drop it from default_targets so a stale entry doesn't linger.
             defaults = list(self.config_store.data.get("default_targets", []) or [])
             if name in defaults:
@@ -2590,6 +2771,7 @@ class ChairsideReadyAlertApp:
                 self.config_store.save()
             listbox.delete(idx)
             _update_remove_state()
+            self._broadcast_label_event("remove", name)
         remove_btn.configure(command=_do_remove)
 
         entry.focus_set()
@@ -2727,12 +2909,14 @@ class ChairsideReadyAlertApp:
 
         ttk.Label(left, text="Station Setup", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(left, text="Station name:", style="Card.TLabel").pack(anchor="w", pady=(0, 2))
+        # Readonly: free-text typing was redundant with the new "Add or Remove
+        # Computers..." dialog and led to drift between local typed names and the
+        # network-shared list. Users now pick from the dropdown only.
         self.label_combo = ttk.Combobox(left, textvariable=self.label_var,
-                                         values=list(self._effective_station_labels()), width=22)
+                                         values=list(self._effective_station_labels()),
+                                         width=22, state="readonly")
         self.label_combo.pack(fill="x")
         self.label_combo.bind("<<ComboboxSelected>>", self._on_station_label_selected)
-        self.label_combo.bind("<FocusOut>", self._on_station_label_focus_out)
-        self.label_combo.bind("<Return>", self._on_station_label_focus_out)
         self.duplicate_name_var = tk.StringVar(value="")
         self.duplicate_name_label = tk.Label(
             left,
@@ -2951,26 +3135,12 @@ class ChairsideReadyAlertApp:
     def _on_station_label_selected(self, _event=None) -> None:
         self._commit_station_label_if_changed()
 
-    def _on_station_label_focus_out(self, _event=None) -> None:
-        self._commit_station_label_if_changed()
-
     def _commit_station_label_if_changed(self) -> None:
-        raw = self.label_var.get()
-        new = raw.strip()
+        # Combobox is readonly — the value is always one of the dropdown entries
+        # already in station_labels. Nothing to validate or auto-add.
+        new = self.label_var.get().strip()
         if not new:
-            messagebox.showwarning(APP_TITLE, "Station name cannot be empty.", parent=self.root)
-            self.label_var.set(self._last_committed_label or "Room 1")
             return
-        if new != raw:
-            self.label_var.set(new)
-        # If the user typed a brand-new station name, append it to the editable
-        # station_labels list so it shows up in the dropdown and the Defaults menu.
-        labels = self._effective_station_labels()
-        if new not in labels:
-            labels.append(new)
-            self._set_station_labels(labels)
-        else:
-            self.label_combo["values"] = list(labels)
         if new == self._last_committed_label:
             return
         self._last_committed_label = new
@@ -3231,6 +3401,9 @@ class ChairsideReadyAlertApp:
             return
 
         self.discovery = LanDiscovery(label, port, self.local_ips, self.queue)
+        # Seed the beacon with our current shared-list state so the first beacon
+        # already carries it; new peers converge without waiting for the next add/remove.
+        self._sync_discovery_label_state()
         self.discovery.start()
         self._network_running = True
         self._set_duplicate_name_warning(False)
@@ -3344,6 +3517,12 @@ class ChairsideReadyAlertApp:
                 self._dispatch_tray_action(str(payload))
             elif kind == "focus_request":
                 self._show_main_window()
+            elif kind == "labels_snapshot":
+                inc_labels, inc_removed = payload
+                self._merge_remote_labels_snapshot(inc_labels, inc_removed)
+            elif kind == "label_event":
+                action, label = payload
+                self._apply_remote_label_event(action, label)
         self.root.after(120, self._process_ui_queue)
 
     def _handle_network_payload(self, payload: dict) -> None:

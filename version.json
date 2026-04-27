@@ -1,7 +1,7 @@
 {
-  "version": "1.0.9",
+  "version": "1.0.10",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Adds 'Add or Remove Computers...' to the Defaults menu. Lets users edit the list of station names directly: type a name + click Add to append, select an item + click Remove to delete. The list drives both the Station name dropdown and the Defaults menu.",
+  "release_notes": "Adds and removals from 'Add or Remove Computers...' now propagate to every workstation on the LAN within a few seconds, and stay sticky (a removed name does not silently come back from another peer's beacon). The Station name dropdown is now selection-only — typing free text in it was redundant with the new dialog.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",
