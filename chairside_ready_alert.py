@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -1939,15 +1939,8 @@ class ChairsideReadyAlertApp:
         )
         settings_menu.add_separator()
         settings_menu.add_command(label="Network Settings...", command=self._open_network_settings_window)
-        settings_menu.add_command(label="Connection log...", command=self._open_connection_log_window)
         if not IS_FROZEN:
             settings_menu.add_command(label="Check for updates...", command=self._check_for_updates_clicked)
-        settings_menu.add_command(label="Windows Tray Icon Setup...", command=self._show_windows_tray_help)
-        settings_menu.add_command(label="Tray diagnostics...", command=self._open_tray_diagnostics_window)
-        settings_menu.add_separator()
-        settings_menu.add_command(label="Send Ready (Tray)", command=self._send_ready_from_widget)
-        settings_menu.add_command(label="Stop Network", command=self.stop_network)
-        settings_menu.add_command(label="Start Network", command=self.start_network)
         menu.add_cascade(label="Settings", menu=settings_menu)
         self._default_menu = tk.Menu(menu, tearoff=0)
         menu.add_cascade(label="Default", menu=self._default_menu)
@@ -1958,7 +1951,26 @@ class ChairsideReadyAlertApp:
                 command=lambda n=theme_name: self._apply_theme(n),
             )
         menu.add_cascade(label="Layout", menu=layout_menu)
+        help_menu = tk.Menu(menu, tearoff=0)
+        help_menu.add_command(label="Connection log...", command=self._open_connection_log_window)
+        help_menu.add_command(label="Windows Tray Icon Setup...", command=self._show_windows_tray_help)
+        help_menu.add_separator()
+        help_menu.add_command(label="Stop Network", command=self.stop_network)
+        help_menu.add_command(label="Start Network", command=self.start_network)
+        help_menu.add_separator()
+        help_menu.add_command(label="About", command=self._show_about_dialog)
+        menu.add_cascade(label="Help", menu=help_menu)
         self.root.config(menu=menu)
+
+    def _show_about_dialog(self) -> None:
+        messagebox.showinfo(
+            f"About {APP_TITLE}",
+            f"{APP_TITLE}\n"
+            f"Version {APP_VERSION}\n\n"
+            f"For support questions, contact:\n"
+            f"support@fieldcrestdental.com\n\n"
+            f"Please allow 24-48 hours for a response.",
+        )
 
     def _autostart_windows_bat_path(self) -> str:
         appdata = os.environ.get("APPDATA", "")

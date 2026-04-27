@@ -1,7 +1,7 @@
 {
-  "version": "1.0.10",
+  "version": "1.0.11",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Adds and removals from 'Add or Remove Computers...' now propagate to every workstation on the LAN within a few seconds, and stay sticky (a removed name does not silently come back from another peer's beacon). The Station name dropdown is now selection-only — typing free text in it was redundant with the new dialog.",
+  "release_notes": "Menu bar reorganized: new Help menu hosts Connection log, Windows Tray Icon Setup, Stop/Start Network, and an About dialog with the support@fieldcrestdental.com contact (please allow 24-48 hours for a response). Settings is trimmed — Tray diagnostics and the duplicate Send Ready (Tray) entry have been removed. The tray icon's Send Ready action is unchanged.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",
