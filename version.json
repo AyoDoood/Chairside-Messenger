@@ -1,7 +1,7 @@
 {
-  "version": "1.0.8",
+  "version": "1.0.9",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Fixes the macOS Desktop shortcut from 1.0.7. Replaces the broken .app symlink with a real Finder alias (named \"Chairside Ready Alert\", no .app suffix) so double-clicking launches the canonical app in ~/Applications/ correctly.",
+  "release_notes": "Adds 'Add or Remove Computers...' to the Defaults menu. Lets users edit the list of station names directly: type a name + click Add to append, select an item + click Remove to delete. The list drives both the Station name dropdown and the Defaults menu.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

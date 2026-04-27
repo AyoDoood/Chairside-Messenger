@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -457,6 +457,11 @@ class ConfigStore:
             "alert_sound": ALERT_SOUND_OPTIONS[0],
             "alert_volume": 70,
             "custom_station_labels": [],
+            # User-editable list of station names available for the Station name
+            # combobox and the Defaults menu. Authoritative once present; on first
+            # launch after upgrade, migrated from DEFAULT_LABELS + custom_station_labels.
+            # See ChairsideReadyAlertApp._effective_station_labels.
+            "station_labels": [],
             "default_targets": [],
             "theme": DEFAULT_THEME,
             "tray_visibility_help_shown": False,
@@ -1168,6 +1173,7 @@ class ChairsideReadyAlertApp:
         self._last_committed_label = ""
         self._default_menu: Optional[tk.Menu] = None
         self._default_menu_vars: dict[str, tk.BooleanVar] = {}
+        self._manage_stations_window: Optional[tk.Toplevel] = None
         self._autostart_var = tk.BooleanVar(value=False)
         self._quitting = False
         self._main_hidden = False
@@ -2399,6 +2405,47 @@ class ChairsideReadyAlertApp:
         self._quitting = True
         self.on_close()
 
+    def _effective_station_labels(self) -> list[str]:
+        """Authoritative list of station names available in the Station name combobox
+        and the Defaults menu. Lazy-migrates from DEFAULT_LABELS + custom_station_labels
+        on first read after upgrade."""
+        existing = self.config_store.data.get("station_labels")
+        if isinstance(existing, list) and existing:
+            return [str(x) for x in existing]
+        custom = list(self.config_store.data.get("custom_station_labels", []) or [])
+        seeded: list[str] = list(DEFAULT_LABELS) + [c for c in custom if c not in DEFAULT_LABELS]
+        self.config_store.data["station_labels"] = seeded
+        try:
+            self.config_store.save()
+        except Exception:
+            pass
+        return list(seeded)
+
+    def _set_station_labels(self, labels: list[str]) -> None:
+        """Persist a new station_labels list and refresh main-window UI that depends on it."""
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in labels:
+            name = str(raw).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            cleaned.append(name)
+        self.config_store.data["station_labels"] = cleaned
+        self.config_store.save()
+        self._refresh_station_label_widgets()
+
+    def _refresh_station_label_widgets(self) -> None:
+        """Update the Station name combobox values and the Defaults menu after the
+        editable station_labels list changes."""
+        labels = self._effective_station_labels()
+        if hasattr(self, "label_combo") and self.label_combo is not None:
+            try:
+                self.label_combo["values"] = list(labels)
+            except tk.TclError:
+                pass
+        self._rebuild_default_menu()
+
     def _rebuild_default_menu(self) -> None:
         if self._default_menu is None:
             return
@@ -2407,24 +2454,146 @@ class ChairsideReadyAlertApp:
         self._default_menu_vars.clear()
         me = self.label_var.get().strip() if hasattr(self, "label_var") else ""
         default_targets = set(self.config_store.data.get("default_targets", []))
-        known = [l for l in DEFAULT_LABELS if l != me]
+        known = [l for l in self._effective_station_labels() if l != me]
         for label in self.online_labels:
             if label not in known and label != me:
                 known.append(label)
-        custom = self.config_store.data.get("custom_station_labels", [])
-        for label in custom:
-            if label not in known and label != me:
-                known.append(label)
-        if not known:
+        if known:
+            for label in known:
+                var = tk.BooleanVar(value=label in default_targets)
+                self._default_menu_vars[label] = var
+                menu.add_checkbutton(label=label, variable=var,
+                                     command=lambda l=label: self._toggle_default_target(l))
+        else:
             menu.add_command(label="(No other stations configured)", state="disabled")
-            return
-        for label in known:
-            var = tk.BooleanVar(value=label in default_targets)
-            self._default_menu_vars[label] = var
-            menu.add_checkbutton(label=label, variable=var,
-                                 command=lambda l=label: self._toggle_default_target(l))
         menu.add_separator()
-        menu.add_command(label="Clear All", command=self._clear_default_targets)
+        menu.add_command(label="Add or Remove Computers...",
+                         command=self._open_manage_stations_dialog)
+
+    def _open_manage_stations_dialog(self) -> None:
+        """Modal-ish editor for the station_labels list reachable from Defaults menu."""
+        existing = getattr(self, "_manage_stations_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_set()
+                    return
+            except tk.TclError:
+                pass
+        win = tk.Toplevel(self.root)
+        win.title("Add or Remove Computers")
+        win.transient(self.root)
+        win.resizable(False, False)
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+        self._manage_stations_window = win
+
+        def _on_close() -> None:
+            self._manage_stations_window = None
+            try:
+                win.grab_release()
+            except tk.TclError:
+                pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+        # Top: text entry + Add button.
+        add_frame = ttk.Frame(win, padding=(12, 12, 12, 6))
+        add_frame.pack(fill="x")
+        ttk.Label(add_frame, text="Computer name:").grid(row=0, column=0, columnspan=2, sticky="w")
+        entry_var = tk.StringVar()
+        entry = ttk.Entry(add_frame, textvariable=entry_var, width=28)
+        entry.grid(row=1, column=0, sticky="we", pady=(4, 0))
+        add_btn = ttk.Button(add_frame, text="Add", state="disabled")
+        add_btn.grid(row=1, column=1, sticky="e", padx=(8, 0), pady=(4, 0))
+        add_frame.columnconfigure(0, weight=1)
+
+        # Middle: listbox of computers.
+        list_frame = ttk.Frame(win, padding=(12, 6, 12, 6))
+        list_frame.pack(fill="both", expand=True)
+        ttk.Label(list_frame, text="Computers:").pack(anchor="w")
+        list_inner = ttk.Frame(list_frame)
+        list_inner.pack(fill="both", expand=True, pady=(4, 0))
+        listbox = tk.Listbox(list_inner, selectmode="single", height=10, exportselection=False,
+                             activestyle="dotbox")
+        listbox.pack(side="left", fill="both", expand=True)
+        scroll = ttk.Scrollbar(list_inner, orient="vertical", command=listbox.yview)
+        scroll.pack(side="right", fill="y")
+        listbox.configure(yscrollcommand=scroll.set)
+        for label in self._effective_station_labels():
+            listbox.insert("end", label)
+
+        # Bottom: Remove on the left, Close on the right.
+        bottom = ttk.Frame(win, padding=(12, 6, 12, 12))
+        bottom.pack(fill="x")
+        remove_btn = ttk.Button(bottom, text="Remove", state="disabled")
+        remove_btn.pack(side="left")
+        ttk.Button(bottom, text="Close", command=_on_close).pack(side="right")
+
+        # Enable/disable Add depending on entry contents.
+        def _update_add_state(*_args: object) -> None:
+            text = entry_var.get().strip()
+            add_btn.configure(state=("normal" if text else "disabled"))
+        entry_var.trace_add("write", _update_add_state)
+
+        # Enable/disable Remove depending on listbox selection.
+        def _update_remove_state(_event: object = None) -> None:
+            remove_btn.configure(state=("normal" if listbox.curselection() else "disabled"))
+        listbox.bind("<<ListboxSelect>>", _update_remove_state)
+
+        def _do_add() -> None:
+            name = entry_var.get().strip()
+            if not name:
+                return
+            labels = self._effective_station_labels()
+            if name in labels:
+                messagebox.showinfo(APP_TITLE,
+                                    f'"{name}" is already in the list.',
+                                    parent=win)
+                entry.focus_set()
+                return
+            labels.append(name)
+            self._set_station_labels(labels)
+            listbox.insert("end", name)
+            entry_var.set("")
+            _update_add_state()
+            entry.focus_set()
+        add_btn.configure(command=_do_add)
+        entry.bind("<Return>", lambda _e: _do_add())
+
+        def _do_remove() -> None:
+            sel = listbox.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            name = listbox.get(idx)
+            current = self.label_var.get().strip() if hasattr(self, "label_var") else ""
+            if name == current:
+                messagebox.showwarning(APP_TITLE,
+                                       f'Cannot remove "{name}" — it is the current station name '
+                                       'for this computer. Change this computer\'s station name '
+                                       'to something else first, then remove it from the list.',
+                                       parent=win)
+                return
+            labels = self._effective_station_labels()
+            if name in labels:
+                labels.remove(name)
+                self._set_station_labels(labels)
+            # Also drop it from default_targets so a stale entry doesn't linger.
+            defaults = list(self.config_store.data.get("default_targets", []) or [])
+            if name in defaults:
+                defaults = [d for d in defaults if d != name]
+                self.config_store.data["default_targets"] = defaults
+                self.config_store.save()
+            listbox.delete(idx)
+            _update_remove_state()
+        remove_btn.configure(command=_do_remove)
+
+        entry.focus_set()
+        win.bind("<Escape>", lambda _e: _on_close())
 
     def _toggle_default_target(self, label: str) -> None:
         var = self._default_menu_vars.get(label)
@@ -2439,11 +2608,6 @@ class ChairsideReadyAlertApp:
         self.config_store.save()
         if label in self.target_vars:
             self.target_vars[label].set(var.get())
-
-    def _clear_default_targets(self) -> None:
-        self.config_store.data["default_targets"] = []
-        self.config_store.save()
-        self._rebuild_default_menu()
 
     def _apply_theme(self, name: str) -> None:
         if name not in THEMES:
@@ -2563,7 +2727,8 @@ class ChairsideReadyAlertApp:
 
         ttk.Label(left, text="Station Setup", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(left, text="Station name:", style="Card.TLabel").pack(anchor="w", pady=(0, 2))
-        self.label_combo = ttk.Combobox(left, textvariable=self.label_var, values=list(DEFAULT_LABELS), width=22)
+        self.label_combo = ttk.Combobox(left, textvariable=self.label_var,
+                                         values=list(self._effective_station_labels()), width=22)
         self.label_combo.pack(fill="x")
         self.label_combo.bind("<<ComboboxSelected>>", self._on_station_label_selected)
         self.label_combo.bind("<FocusOut>", self._on_station_label_focus_out)
@@ -2702,8 +2867,7 @@ class ChairsideReadyAlertApp:
         else:
             self.alert_sound_var.set(default_sound)
         self.alert_volume_var.set(int(data.get("alert_volume", 70)))
-        custom = [c for c in data.get("custom_station_labels", []) if c not in DEFAULT_LABELS]
-        self.label_combo["values"] = list(DEFAULT_LABELS) + custom
+        self.label_combo["values"] = list(self._effective_station_labels())
         self._target_signature = None
         self._last_committed_label = self.label_var.get().strip()
         self._refresh_target_checkboxes(list(self.online_labels))
@@ -2799,13 +2963,14 @@ class ChairsideReadyAlertApp:
             return
         if new != raw:
             self.label_var.set(new)
-        # Add custom label to dropdown if not already present
-        all_presets = list(DEFAULT_LABELS)
-        custom = list(self.config_store.data.get("custom_station_labels", []))
-        if new not in all_presets and new not in custom:
-            custom.append(new)
-            self.config_store.data["custom_station_labels"] = custom
-        self.label_combo["values"] = all_presets + [c for c in custom if c not in all_presets]
+        # If the user typed a brand-new station name, append it to the editable
+        # station_labels list so it shows up in the dropdown and the Defaults menu.
+        labels = self._effective_station_labels()
+        if new not in labels:
+            labels.append(new)
+            self._set_station_labels(labels)
+        else:
+            self.label_combo["values"] = list(labels)
         if new == self._last_committed_label:
             return
         self._last_committed_label = new
