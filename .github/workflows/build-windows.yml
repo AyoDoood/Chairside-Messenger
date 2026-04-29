@@ -88,11 +88,12 @@ jobs:
           Set-Content -Path (Join-Path $stage "AppxManifest.xml") -Value $manifest -Encoding UTF8
 
           # If the user hasn't pasted the three Partner Center identity values yet,
-          # skip MSIX packaging so the EXE artifacts still ship cleanly. The user
-          # will see the warning and an empty -msix artifact; once they replace the
-          # placeholders the next tag will produce real .msix files.
-          if ($manifest -match "REPLACE_WITH_PARTNER_CENTER_") {
-            Write-Host "::warning::AppxManifest.xml still contains REPLACE_WITH_PARTNER_CENTER_ placeholders. Skipping MSIX packaging for ${{ matrix.arch }}. Paste the three identity values from Partner Center to enable Store-ready MSIX builds."
+          # skip MSIX packaging so the EXE artifacts still ship cleanly. We strip
+          # XML comments before matching so descriptive text in the comment block
+          # at the top of the manifest doesn't trip the check.
+          $manifestNoComments = [System.Text.RegularExpressions.Regex]::Replace($manifest, '<!--[\s\S]*?-->', '')
+          if ($manifestNoComments -match "TODO_PACKAGE_IDENTITY_NAME|TODO_PUBLISHER|TODO_PUBLISHER_DISPLAY_NAME") {
+            Write-Host "::warning::AppxManifest.xml still contains TODO_* identity placeholders. Skipping MSIX packaging for ${{ matrix.arch }}. Paste the three identity values from Partner Center to enable Store-ready MSIX builds."
             echo "MSIX_READY=false" >> $env:GITHUB_ENV
           } else {
             echo "MSIX_READY=true" >> $env:GITHUB_ENV

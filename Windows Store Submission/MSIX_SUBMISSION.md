@@ -35,10 +35,11 @@ Three string values must match exactly. They live at:
 | Package/Identity/Publisher | `<Identity Publisher="..." />` |
 | Package/Properties/PublisherDisplayName | `<PublisherDisplayName>...</PublisherDisplayName>` |
 
-Open `Windows Store Submission/AppxManifest.xml`. Replace the three
-`REPLACE_WITH_PARTNER_CENTER_*` placeholders with the values from Partner
-Center. Commit and push. The other two placeholders (`VERSION_PLACEHOLDER`,
-`ARCH_PLACEHOLDER`) are filled in automatically by the build — leave them.
+Open `Windows Store Submission/AppxManifest.xml`. Find the three
+`TODO_*` markers (currently on lines 39, 40, and 46) and replace each
+with the matching value from Partner Center. Commit and push. The other
+two placeholders (`VERSION_PLACEHOLDER`, `ARCH_PLACEHOLDER`) are filled
+in automatically by the build — leave them.
 
 > ⚠️ Do NOT use `®` or `CN=...` strings you make up. Partner Center has
 > already generated these for your account; the only acceptable values are

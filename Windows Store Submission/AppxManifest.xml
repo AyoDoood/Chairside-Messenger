@@ -10,19 +10,20 @@
       Apps and games -> Chairside Ready Alert -> Product management ->
                                                  App identity (or "Product Identity")
 
-    The three values to copy:
+    The three values to copy (search-and-replace each TODO_* string below
+    with the matching Partner Center value):
 
-      1. <Identity Name="REPLACE_WITH_PARTNER_CENTER_PACKAGE_IDENTITY_NAME" ...>
-         Partner Center calls this:  Package/Identity/Name
-         Looks like:                 12345FieldcrestDentalPC.ChairsideReadyAlert
+      1. TODO_PACKAGE_IDENTITY_NAME   in the <Identity Name="..."> attribute
+         Partner Center calls this:    Package/Identity/Name
+         Example shape:                12345FieldcrestDentalPC.ChairsideReadyAlert
 
-      2. <Identity ... Publisher="REPLACE_WITH_PARTNER_CENTER_PUBLISHER" ...>
-         Partner Center calls this:  Package/Identity/Publisher
-         Looks like:                 CN=A1B2C3D4-E5F6-7890-ABCD-EF1234567890
+      2. TODO_PUBLISHER                in the <Identity Publisher="..."> attribute
+         Partner Center calls this:    Package/Identity/Publisher
+         Example shape:                CN=A1B2C3D4-E5F6-7890-ABCD-EF1234567890
 
-      3. <PublisherDisplayName>REPLACE_WITH_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
-         Partner Center calls this:  Package/Properties/PublisherDisplayName
-         Looks like:                 Fieldcrest Dental PC
+      3. TODO_PUBLISHER_DISPLAY_NAME   in the <PublisherDisplayName>...</PublisherDisplayName> element
+         Partner Center calls this:    Package/Properties/PublisherDisplayName
+         Example shape:                Fieldcrest Dental PC
 
     Two placeholders are filled in automatically by the GitHub Actions
     build at packaging time and should NOT be edited:
@@ -37,14 +38,14 @@
     IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="REPLACE_WITH_PARTNER_CENTER_PACKAGE_IDENTITY_NAME"
-    Publisher="REPLACE_WITH_PARTNER_CENTER_PUBLISHER"
+    Name="TODO_PACKAGE_IDENTITY_NAME"
+    Publisher="TODO_PUBLISHER"
     Version="VERSION_PLACEHOLDER"
     ProcessorArchitecture="ARCH_PLACEHOLDER" />
 
   <Properties>
     <DisplayName>Chairside Ready Alert</DisplayName>
-    <PublisherDisplayName>REPLACE_WITH_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+    <PublisherDisplayName>TODO_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
