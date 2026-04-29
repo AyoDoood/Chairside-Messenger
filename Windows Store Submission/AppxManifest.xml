@@ -27,8 +27,8 @@
     Two placeholders are filled in automatically by the GitHub Actions
     build at packaging time and should NOT be edited:
 
-      VERSION_PLACEHOLDER  -- substituted from version.json + ".0"  (MSIX requires 4 segments)
-      ARCH_PLACEHOLDER     -- substituted with x64 / x86 / arm64 per matrix job
+      VERSION_PLACEHOLDER : substituted from version.json + ".0"  (MSIX requires 4 segments)
+      ARCH_PLACEHOLDER    : substituted with x64 / x86 / arm64 per matrix job
 -->
 <Package
     xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
