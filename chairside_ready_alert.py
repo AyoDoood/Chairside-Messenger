@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -262,6 +262,137 @@ def _resolve_config_path() -> str:
             return best
 
     return canonical
+
+
+# ============================================================================
+# Microsoft Store subscription gate (Microsoft Store / MSIX builds only)
+#
+# The Microsoft Store build is "free download, $1.99/month subscription".
+# Purchase, billing, renewal, cancellation, and refunds are handled by
+# Microsoft Store via an in-app subscription Add-on. The app's job is to
+# (a) ask Microsoft whether the current Microsoft account has an active
+# subscription, (b) cache that answer for offline tolerance, and
+# (c) gate functionality behind it.
+#
+# This entire subsystem is a no-op when not running as a frozen Microsoft
+# Store build:
+#   - Direct-installer users (Windows .ps1, macOS .command, IS_FROZEN=False)
+#     bypass the check entirely. Their distribution is free as it always was.
+#   - macOS Store has no equivalent path here.
+#
+# Product ID for the subscription Add-on. When the user creates the
+# Subscription Add-on in Partner Center, this exact string MUST be used as
+# the Add-on "Product ID" so the app can query its state.
+# ============================================================================
+SUBSCRIPTION_ADDON_PRODUCT_ID = "ChairsideReadyAlert.Subscription.Monthly"
+SUBSCRIPTION_CACHE_FILE = "subscription_cache.json"
+SUBSCRIPTION_GRACE_DAYS = 7  # Cached "active" state honored this long without a successful Store ping.
+
+
+def _subscription_enforced() -> bool:
+    """Subscription gate is only enforced for the frozen Microsoft Store build
+    on Windows. Everywhere else (dev, direct-installer, macOS) returns False
+    and the gate is bypassed."""
+    return IS_FROZEN and sys.platform == "win32"
+
+
+def _subscription_cache_path() -> str:
+    return os.path.join(_user_data_dir(), SUBSCRIPTION_CACHE_FILE)
+
+
+def _read_subscription_cache() -> dict:
+    try:
+        with open(_subscription_cache_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _write_subscription_cache(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_subscription_cache_path()), exist_ok=True)
+        with open(_subscription_cache_path(), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+
+
+def _is_subscribed_from_cache() -> bool:
+    cache = _read_subscription_cache()
+    if not cache.get("active"):
+        return False
+    last_checked = float(cache.get("last_checked", 0) or 0)
+    return (time.time() - last_checked) <= (SUBSCRIPTION_GRACE_DAYS * 86400)
+
+
+def _check_store_subscription_live() -> Optional[bool]:
+    """Live query to Microsoft Store. Returns True/False on a successful query,
+    or None if the Store services aren't reachable (caller should fall back to
+    cache). Only called when _subscription_enforced() is True."""
+    try:
+        # Imports deferred so non-Windows / non-frozen builds never hit them.
+        import asyncio  # noqa: WPS433 — local import is intentional
+        from winrt.windows.services.store import StoreContext  # type: ignore
+    except Exception:
+        return None
+    try:
+        async def _query() -> bool:
+            ctx = StoreContext.get_default()
+            info = await ctx.get_user_collection_async(["Durable", "Subscription"])
+            for item in info.products.values():
+                offer_token = getattr(item, "in_app_offer_token", "") or ""
+                if offer_token == SUBSCRIPTION_ADDON_PRODUCT_ID and bool(getattr(item, "is_active", False)):
+                    return True
+            return False
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_query())
+        finally:
+            loop.close()
+    except Exception:
+        return None
+
+
+def is_subscribed() -> bool:
+    """Synchronous gate query. Tries Microsoft Store live; falls back to cache
+    on transient failure. Returns True for non-Store builds (gate disabled)."""
+    if not _subscription_enforced():
+        return True
+    live = _check_store_subscription_live()
+    if live is not None:
+        _write_subscription_cache({"active": bool(live), "last_checked": time.time()})
+        return bool(live)
+    return _is_subscribed_from_cache()
+
+
+def request_subscription_purchase() -> bool:
+    """Open the Microsoft Store in-app purchase overlay for the subscription
+    Add-on. Returns True on completed purchase, False otherwise."""
+    if not _subscription_enforced():
+        return True
+    try:
+        import asyncio  # noqa: WPS433
+        from winrt.windows.services.store import StoreContext, StorePurchaseStatus  # type: ignore
+    except Exception:
+        return False
+    try:
+        async def _buy() -> bool:
+            ctx = StoreContext.get_default()
+            result = await ctx.request_purchase_async(SUBSCRIPTION_ADDON_PRODUCT_ID)
+            return getattr(result, "status", None) == StorePurchaseStatus.SUCCEEDED
+        loop = asyncio.new_event_loop()
+        try:
+            ok = loop.run_until_complete(_buy())
+        finally:
+            loop.close()
+        if ok:
+            _write_subscription_cache({"active": True, "last_checked": time.time()})
+        return ok
+    except Exception:
+        return False
 
 
 class SingleInstanceLock:
@@ -3753,6 +3884,104 @@ def _notify_existing_instance_focus() -> bool:
         return False
 
 
+def _run_subscription_paywall(root: tk.Tk) -> bool:
+    """Modal paywall shown before the main UI when no active subscription.
+    Returns True if the user successfully subscribed (proceed to main UI),
+    False if they chose to quit. Only called for the frozen Store build."""
+    win = tk.Toplevel(root)
+    win.title("Chairside Ready Alert — Subscription required")
+    win.resizable(False, False)
+    win.protocol("WM_DELETE_WINDOW", lambda: None)  # X disabled — must use a button
+
+    outcome: dict[str, bool] = {"subscribed": False, "quit": False}
+
+    body = ttk.Frame(win, padding=(24, 20, 24, 16))
+    body.pack(fill="both", expand=True)
+
+    ttk.Label(body, text="Subscribe to Chairside Ready Alert",
+              font=_ui_font(14, "bold")).pack(anchor="w")
+    ttk.Label(body, text="$1.99 / month — billed and managed by Microsoft Store.",
+              font=_ui_font(11)).pack(anchor="w", pady=(2, 12))
+    ttk.Label(
+        body,
+        text=("LAN messaging between dental workstations. One Microsoft\n"
+              "account covers up to 10 devices. Cancel anytime in Microsoft\n"
+              "Store. Your alert messages stay on your local network — they\n"
+              "never go through any cloud service."),
+        font=_ui_font(10), justify="left",
+    ).pack(anchor="w", pady=(0, 14))
+
+    status_var = tk.StringVar(value="")
+    status_lbl = ttk.Label(body, textvariable=status_var, font=_ui_font(10),
+                           foreground="#666666")
+    status_lbl.pack(anchor="w", pady=(0, 8))
+
+    btn_row = ttk.Frame(body)
+    btn_row.pack(fill="x", pady=(4, 0))
+
+    sub_btn = ttk.Button(btn_row, text="Subscribe — $1.99 / month")
+    restore_btn = ttk.Button(btn_row, text="Restore purchases")
+    quit_btn = ttk.Button(btn_row, text="Quit")
+    sub_btn.pack(side="left")
+    restore_btn.pack(side="left", padx=(8, 0))
+    quit_btn.pack(side="right")
+
+    def _busy(msg: str) -> None:
+        status_var.set(msg)
+        for b in (sub_btn, restore_btn, quit_btn):
+            b.configure(state="disabled")
+        win.update_idletasks()
+
+    def _idle(msg: str = "") -> None:
+        status_var.set(msg)
+        for b in (sub_btn, restore_btn, quit_btn):
+            b.configure(state="normal")
+
+    def _on_subscribe() -> None:
+        _busy("Opening Microsoft Store...")
+        ok = request_subscription_purchase()
+        if ok:
+            _busy("Subscription active. Loading Chairside Ready Alert...")
+            outcome["subscribed"] = True
+            win.after(150, win.destroy)
+        else:
+            _idle("Purchase did not complete. You can try again or quit.")
+
+    def _on_restore() -> None:
+        _busy("Checking subscription...")
+        if is_subscribed():
+            _busy("Subscription active. Loading Chairside Ready Alert...")
+            outcome["subscribed"] = True
+            win.after(150, win.destroy)
+        else:
+            _idle("No active subscription found on this Microsoft account.")
+
+    def _on_quit() -> None:
+        outcome["quit"] = True
+        win.destroy()
+
+    sub_btn.configure(command=_on_subscribe)
+    restore_btn.configure(command=_on_restore)
+    quit_btn.configure(command=_on_quit)
+
+    win.update_idletasks()
+    # Center on screen.
+    w = win.winfo_width()
+    h = win.winfo_height()
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    win.geometry(f"+{(sw - w) // 2}+{(sh - h) // 3}")
+
+    win.transient(root)
+    try:
+        win.grab_set()
+    except tk.TclError:
+        pass
+
+    root.wait_window(win)
+    return outcome["subscribed"]
+
+
 def main() -> None:
     _append_startup_log("starting main()")
     lock_path = os.path.join(_user_data_dir(), INSTANCE_LOCK_FILE)
@@ -3777,6 +4006,14 @@ def main() -> None:
             return
     root = tk.Tk()
     try:
+        # Microsoft Store / MSIX subscription gate. Bypassed for non-Store builds.
+        if _subscription_enforced() and not is_subscribed():
+            _append_startup_log("No active subscription — showing paywall.")
+            root.withdraw()
+            if not _run_subscription_paywall(root):
+                _append_startup_log("Paywall dismissed without subscription — quitting.")
+                return
+            root.deiconify()
         _append_startup_log("Tk() created, building app")
         ChairsideReadyAlertApp(root)
         _append_startup_log("entering mainloop()")

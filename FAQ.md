@@ -281,8 +281,46 @@ The version is shown when **Settings → Check for updates…** reports
 No. The app does not contain analytics SDKs, advertising SDKs, or
 crash reporting that contacts external servers. The only outbound
 internet traffic is the **manual** update check on direct-installer
-builds (Microsoft Store builds have no outbound internet traffic
-at all).
+builds (Microsoft Store builds verify the local user's Microsoft
+subscription via the Microsoft Store SDK; this query goes through
+the local Windows Microsoft Store service, not a third-party
+endpoint).
+
+**Q: How does the subscription work?**
+The Microsoft Store version is **free to download** and requires a
+**$1.99 / month subscription** to use. Microsoft Store handles
+billing, renewal, and cancellation. One subscription on a single
+Microsoft account covers up to **10 devices** linked to that
+account — enough for an entire typical dental practice from one
+purchase.
+
+To subscribe: launch the app, click "Subscribe — $1.99 / month" in
+the welcome window. Microsoft Store overlays its own purchase
+flow. Once complete, the app loads normally.
+
+**Q: How do I cancel my subscription?**
+In the Microsoft Store app:
+**Library → Subscriptions → Chairside Ready Alert Monthly → Manage → Cancel**.
+You retain access until the end of the current billing period.
+
+**Q: Does the app work offline?**
+Yes, after the subscription is verified once. The app caches the
+verification result for 7 days, so a workstation that loses
+internet keeps working as long as the subscription has been
+verified within the last week. After 7 days without a successful
+verification, the paywall reappears.
+
+**Q: I bought a subscription on another computer — how do I activate it on this one?**
+Sign in to Microsoft Store on the new computer with the **same**
+Microsoft account that holds the subscription. Launch Chairside
+Ready Alert. If the paywall appears, click "Restore purchases" —
+the app will detect the active subscription on that account and
+unlock.
+
+**Q: I'm using the direct-installer (.ps1 / .command) version — do I need to subscribe?**
+No. The subscription requirement applies only to the Microsoft
+Store version. The direct-installer flow (Windows .ps1 / .bat,
+macOS .command) ships free as it always has.
 
 **Q: Is alert traffic encrypted on the LAN?**
 No. Messages and peer-discovery beacons are sent in cleartext across

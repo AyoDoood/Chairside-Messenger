@@ -125,5 +125,49 @@ verify it runs — that's effectively your test.
 | `privateNetworkClientServer` | LAN UDP broadcast (50506) and TCP messaging (50505). |
 
 No `internetClient` capability — the Store build makes no outbound internet
-calls (the in-app update path is gated off in frozen builds, and there's no
-telemetry/analytics).
+calls of its own. The Microsoft Store SDK call to verify the user's
+subscription goes through the local Microsoft Store service, not through a
+third-party HTTPS endpoint, so it doesn't require declaring internet access.
+
+---
+
+## Configure the subscription Add-on (revenue model)
+
+The Microsoft Store build is **free to download** and gates functionality
+behind a **$1.99 USD / month subscription Add-on**. After your first
+submission is published (or accepted into Store), create the Add-on:
+
+> Apps and games → Chairside Ready Alert → **Add-ons** → **New add-on**
+
+| Field | Value |
+|---|---|
+| Product type | Subscription |
+| Product ID | `ChairsideReadyAlert.Subscription.Monthly` |
+| Visibility | Public |
+| Renewal period | Monthly |
+| Pricing | $1.99 USD (closest tier) |
+| Free trial period | Optional (7 days is common for new subscribers) |
+| Display name | Chairside Ready Alert Monthly |
+| Description | Active subscription unlocks the app on this Microsoft account's devices. Up to 10 devices per account. Cancel any time in Microsoft Store. |
+
+> ⚠️ The Product ID **must match exactly** what the app code expects.
+> Search `chairside_ready_alert.py` for `SUBSCRIPTION_ADDON_PRODUCT_ID` —
+> if you change the constant in code, change it in Partner Center too,
+> and vice versa. They are not negotiated at runtime.
+
+Once the Add-on is published:
+
+1. The app launches at $0 (free download).
+2. On first launch, the Microsoft Store paywall window appears. The user
+   clicks "Subscribe — $1.99 / month" and Microsoft Store overlay handles
+   the purchase.
+3. On subsequent launches, the app silently verifies the subscription is
+   still active (cached locally for 7 days for offline tolerance).
+4. If the user cancels in Microsoft Store, the next launch (after the
+   cache expires) shows the paywall again.
+
+The "network of 8 computers" use case is satisfied without per-seat
+licensing: a Microsoft account can install Store apps on **up to 10
+devices** by default, so a single $1.99/month subscription on a shared
+office Microsoft account covers the entire dental practice's
+workstations.

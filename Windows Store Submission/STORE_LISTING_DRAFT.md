@@ -30,7 +30,12 @@ cert team) and the assets in `logos/`.
 Chairside Ready Alert is a simple, private LAN messaging tool for dental
 practices. With one click, a clinical assistant can let the doctor know
 "Room 2 is ready" — and the doctor's PC pings, blinks, and brings the
-window to the foreground. No server. No cloud account. No subscription.
+window to the foreground. No server. No cloud account.
+
+Pricing: Free to download. $1.99 / month subscription unlocks the app on up
+to 10 devices linked to your Microsoft account — enough for an entire
+typical dental practice from one purchase. Microsoft Store handles billing
+and you can cancel any time.
 
 How it works
 Every workstation runs the same app. Each one is given a station label
@@ -67,7 +72,7 @@ support@fieldcrestdental.com
 ## Store listing → Short description / tag line (≤200 chars)
 
 ```
-One-click LAN alerts between dental workstations. No cloud, no accounts, no subscription. Your data stays in your office.
+One-click LAN alerts between dental workstations. $1.99/month covers up to 10 devices on your Microsoft account. Your data stays in your office.
 ```
 
 ---
@@ -174,13 +179,36 @@ Partner Center's 10,000-char limit.
 
 | Field | Value |
 |---|---|
+| Base price | **Free** (the app itself is free to download) |
 | Markets | All available markets |
 | Audience | Public |
-| Free trial | None |
+| Free trial | (configure on the subscription Add-on, not the app) |
 | Sale pricing | None |
 | Schedule | "Publish as soon as certification passes" |
 | Organizational licensing (volume) | Allow |
 | Family-shared license | Off |
+
+### Subscription Add-on (the actual revenue)
+
+After publishing the app at **Free**, create a Subscription Add-on:
+
+> Apps and games → Chairside Ready Alert → **Add-ons** → **New add-on**
+
+| Field | Value |
+|---|---|
+| Product type | Subscription |
+| Product ID | `ChairsideReadyAlert.Subscription.Monthly` (must match exactly — the app code references this string) |
+| Visibility | Public |
+| Pricing | $1.99 USD / month (closest tier to $1.79) |
+| Renewal | Monthly |
+| Free trial period | (optional — 7 days is a common default for first-time subscribers) |
+| Display name | Chairside Ready Alert Monthly |
+| Description | Active subscription unlocks LAN messaging on this Microsoft account's devices. Cancel any time in Microsoft Store. |
+
+The app's launch flow checks the user's Microsoft Store collection for this
+exact Product ID and gates functionality behind an active subscription.
+Microsoft handles billing, renewal, refunds, and cancellation; the app code
+only reads "is the subscription active for this account?"
 
 ---
 

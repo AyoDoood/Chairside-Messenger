@@ -32,6 +32,16 @@ Write-Info "Checking Python launcher..."
 Write-Info "Installing/updating build dependencies..."
 & $PythonExe @PythonArgs -m pip install --upgrade pip
 & $PythonExe @PythonArgs -m pip install --upgrade pyinstaller pystray pillow cairosvg certifi
+# winrt-* packages are needed by the Microsoft Store subscription gate. Pip-install
+# is best-effort: not all of these are guaranteed to wheel cleanly on all Windows
+# Python ABIs, but pyinstaller's --collect-submodules below picks up whatever is
+# importable. The subscription module itself imports lazily and falls back to
+# offline cache if the import fails.
+& $PythonExe @PythonArgs -m pip install --upgrade `
+    "winrt-runtime" `
+    "winrt-Windows.Foundation" `
+    "winrt-Windows.Foundation.Collections" `
+    "winrt-Windows.Services.Store"
 
 Write-Info "Cleaning previous build artifacts..."
 if (Test-Path ".\build") { Remove-Item ".\build" -Recurse -Force }
@@ -50,6 +60,8 @@ Write-Info "Building Windows executable (onedir)..."
   --collect-submodules pystray `
   --collect-submodules PIL `
   --collect-data certifi `
+  --collect-submodules winrt `
+  --collect-submodules "winrt.windows.services.store" `
   --add-data "$licensesDir;licenses" `
   "$appScript"
 
