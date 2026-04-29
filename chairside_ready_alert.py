@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -3699,20 +3699,76 @@ class ChairsideReadyAlertApp:
                 self._focus_and_alert_main_window(alert_sound=alert_sound, alert_volume=int(self.alert_volume_var.get()))
 
     def _focus_and_alert_main_window(self, alert_sound: str = "", alert_volume: int = 70) -> None:
-        if self._main_hidden:
-            self._main_hidden = False
-            if sys.platform == "darwin":
-                self._macos_set_activation_policy_for_main_window(True)
+        # Update the hide-flag eagerly — whether the window was hidden-to-tray
+        # OR minimized via the OS button, we're about to restore it.
+        self._main_hidden = False
+        if sys.platform == "darwin":
+            self._macos_set_activation_policy_for_main_window(True)
+        # Always deiconify. Tk's deiconify restores both withdrawn (hidden) AND
+        # iconic (minimized) states; calling it on an already-visible window is
+        # a no-op. Previously this was gated on _main_hidden, which missed the
+        # case where the user used the OS minimize button.
+        try:
             self.root.deiconify()
-            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+        self.root.update_idletasks()
         self._play_alert_sound(alert_sound=alert_sound, alert_volume=alert_volume)
-        self._blink_main_window(rounds=6)
+        # On Windows, flash the taskbar entry — that's the OS-native attention
+        # pulse users actually see. The bg-color flash is left in for macOS
+        # where there's no equivalent native API; it's also a soft visual
+        # reinforcement on Windows even if the taskbar flash is doing the
+        # heavy lifting.
+        if sys.platform == "win32":
+            self._flash_windows_taskbar(times=2)
+        self._blink_main_window(rounds=4)
         self.root.attributes("-topmost", True)
         self.root.lift()
         self.root.focus_force()
-        self.root.after(350, lambda: self.root.attributes("-topmost", False))
+        self.root.after(400, lambda: self.root.attributes("-topmost", False))
 
-    def _blink_main_window(self, rounds: int = 6) -> None:
+    def _flash_windows_taskbar(self, times: int = 2) -> None:
+        """Flash the taskbar/titlebar on Windows via FlashWindowEx. Equivalent
+        to the attention-pulse Slack/Teams use when a notification arrives but
+        focus can't be stolen. No-op on non-Windows platforms."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.UINT),
+                    ("hwnd", wintypes.HWND),
+                    ("dwFlags", wintypes.DWORD),
+                    ("uCount", wintypes.UINT),
+                    ("dwTimeout", wintypes.DWORD),
+                ]
+
+            FLASHW_CAPTION = 0x00000001
+            FLASHW_TRAY    = 0x00000002
+            FLASHW_ALL     = FLASHW_CAPTION | FLASHW_TRAY
+
+            user32 = ctypes.windll.user32
+            # winfo_id returns the Tk window's HWND. On some Tk builds it
+            # returns the inner client; GetAncestor with GA_ROOT (=2) climbs
+            # to the top-level shell so the taskbar entry actually flashes.
+            hwnd = user32.GetAncestor(self.root.winfo_id(), 2) or self.root.winfo_id()
+
+            info = FLASHWINFO()
+            info.cbSize = ctypes.sizeof(info)
+            info.hwnd = hwnd
+            info.dwFlags = FLASHW_ALL
+            info.uCount = max(1, int(times) * 2)  # each visible flash is one on+off pair
+            info.dwTimeout = 0
+            user32.FlashWindowEx(ctypes.byref(info))
+        except Exception:
+            pass
+
+    def _blink_main_window(self, rounds: int = 4) -> None:
+        # Soft-reinforcement bg flash. On Windows the FlashWindowEx call does
+        # the heavy lifting; this is mostly perceptible on macOS.
         reset_bg = self._current_theme.get("bg", "#f8f9fa")
         colors = [reset_bg, "#fbbc04"]
 
