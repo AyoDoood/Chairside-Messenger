@@ -23,6 +23,8 @@ An empty peer list and inability to send/receive alerts are EXPECTED on a single
 
 Network: the app uses LAN UDP broadcast on port 50506 and LAN TCP on 50505. It makes no outbound internet connections in normal operation. The Store build has no in-app self-update; updates are delivered through the Store channel only.
 
+The runFullTrust restricted capability is declared because this is a Python/Tkinter desktop app packaged as MSIX (desktop bridge). Standard for any PyInstaller-bundled MSIX submission — the bundled Python interpreter and Tkinter GUI cannot run inside UWP sandboxing.
+
 Privacy policy: https://ayodoood.github.io/Chairside-Ready-Alert/PRIVACY_POLICY.html
 Support: support@fieldcrestdental.com
 ```
