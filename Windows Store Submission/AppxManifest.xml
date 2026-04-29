@@ -38,14 +38,14 @@
     IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="TODO_PACKAGE_IDENTITY_NAME"
-    Publisher="TODO_PUBLISHER"
+    Name="FieldcrestDental.ChairsideReadyAlert"
+    Publisher="CN=EBB36BC6-0F33-43EE-9493-D7B3C13F675C"
     Version="VERSION_PLACEHOLDER"
     ProcessorArchitecture="ARCH_PLACEHOLDER" />
 
   <Properties>
     <DisplayName>Chairside Ready Alert</DisplayName>
-    <PublisherDisplayName>TODO_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+    <PublisherDisplayName>Fieldcrest Dental</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
