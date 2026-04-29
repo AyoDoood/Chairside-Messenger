@@ -1,7 +1,7 @@
 {
-  "version": "1.0.12",
+  "version": "1.0.13",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Windows direct-install (.bat) now pre-approves the LAN firewall rules during install via a single UAC prompt, so the app no longer triggers a separate 'Allow Python to communicate' prompt on first launch. The uninstaller cleans the rules back up automatically. No change to the Microsoft Store build (its firewall behavior is governed by the privateNetworkClientServer manifest capability).",
+  "release_notes": "Adds the MSIX packaging path for Microsoft Store submissions. Each tagged release now produces three architecture-specific .msix files (x64/x86/arm64) alongside the existing direct-installer EXE folders. The Partner Center identity values are paste-in placeholders in AppxManifest.xml. See Windows Store Submission/MSIX_SUBMISSION.md for the submission walk-through.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

@@ -38,6 +38,7 @@ except ImportError:
 
 # (width, height, filename, partner-center-purpose)
 SIZES = [
+    (44, 44, "store-logo-44.png", "MSIX Square44x44Logo (taskbar/start)"),
     (50, 50, "store-logo-50.png", "small icon"),
     (71, 71, "store-logo-71.png", "Store small tile"),
     (150, 150, "store-logo-150.png", "Square 150 / Start Tile"),

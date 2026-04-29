@@ -48,9 +48,86 @@ jobs:
         run: |
           .\build_windows_exe.ps1 -PythonExe python
 
-      - name: Upload artifact
+      - name: Upload EXE artifact (direct-installer path)
         uses: actions/upload-artifact@v4
         with:
           name: ChairsideReadyAlert-${{ matrix.arch }}
           path: Windows Store Submission/dist/ChairsideReadyAlert/
+          if-no-files-found: error
+
+      - name: Stage MSIX inputs
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "msix-staging"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $stage "Assets") -Force | Out-Null
+
+          # Copy PyInstaller --onedir bundle (everything inside, not the parent folder).
+          $exeDir = "Windows Store Submission/dist/ChairsideReadyAlert"
+          Copy-Item -Path (Join-Path $exeDir "*") -Destination $stage -Recurse -Force
+
+          # Copy logos with MSIX-standard names that match AppxManifest.xml.
+          $logosDir = "Windows Store Submission/logos"
+          Copy-Item -Path (Join-Path $logosDir "store-logo-44.png")      -Destination (Join-Path $stage "Assets/Square44x44Logo.png")  -Force
+          Copy-Item -Path (Join-Path $logosDir "store-logo-50.png")      -Destination (Join-Path $stage "Assets/StoreLogo.png")        -Force
+          Copy-Item -Path (Join-Path $logosDir "store-logo-71.png")      -Destination (Join-Path $stage "Assets/Square71x71Logo.png")  -Force
+          Copy-Item -Path (Join-Path $logosDir "store-logo-150.png")     -Destination (Join-Path $stage "Assets/Square150x150Logo.png") -Force
+          Copy-Item -Path (Join-Path $logosDir "store-logo-310x150.png") -Destination (Join-Path $stage "Assets/Wide310x150Logo.png")  -Force
+          Copy-Item -Path (Join-Path $logosDir "store-logo-310x310.png") -Destination (Join-Path $stage "Assets/Square310x310Logo.png") -Force
+
+          # Read version from version.json; MSIX requires a 4-segment version.
+          $vj = Get-Content -Raw -Path "version.json" | ConvertFrom-Json
+          $msixVersion = "$($vj.version).0"
+          Write-Host "MSIX version: $msixVersion"
+
+          # Substitute placeholders in the manifest template.
+          $manifest = Get-Content -Raw -Path "Windows Store Submission/AppxManifest.xml"
+          $manifest = $manifest -replace "VERSION_PLACEHOLDER", $msixVersion
+          $manifest = $manifest -replace "ARCH_PLACEHOLDER", "${{ matrix.arch }}"
+          Set-Content -Path (Join-Path $stage "AppxManifest.xml") -Value $manifest -Encoding UTF8
+
+          # Echo the final manifest for build-log auditability.
+          Write-Host "----- AppxManifest.xml (after substitution) -----"
+          Get-Content -Path (Join-Path $stage "AppxManifest.xml") | Where-Object { $_ -match '<Identity|Version|Architecture|Publisher|<DisplayName' } | Write-Host
+          Write-Host "--------------------------------------------------"
+
+          echo "MSIX_STAGE=$stage" >> $env:GITHUB_ENV
+
+      - name: Pack MSIX
+        shell: pwsh
+        run: |
+          # Locate MakeAppx.exe in the most recent Windows 10 SDK.
+          $kitsRoot = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $makeAppx = $null
+          if (Test-Path $kitsRoot) {
+            $kits = Get-ChildItem -Path $kitsRoot -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending
+            foreach ($kit in $kits) {
+              foreach ($archDir in @("x64", "arm64", "x86")) {
+                $candidate = Join-Path $kit.FullName "$archDir\MakeAppx.exe"
+                if (Test-Path $candidate) { $makeAppx = $candidate; break }
+              }
+              if ($makeAppx) { break }
+            }
+          }
+          if (-not $makeAppx) { throw "MakeAppx.exe not found under $kitsRoot. Install the Windows 10 SDK." }
+          Write-Host "Using MakeAppx: $makeAppx"
+
+          $stage = $env:MSIX_STAGE
+          $output = Join-Path $env:RUNNER_TEMP "ChairsideReadyAlert-${{ matrix.arch }}.msix"
+          if (Test-Path $output) { Remove-Item -Force $output }
+
+          & $makeAppx pack /d $stage /p $output /v
+          if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed with exit code $LASTEXITCODE" }
+
+          if (-not (Test-Path $output)) { throw "MakeAppx reported success but $output is missing." }
+          $size = (Get-Item $output).Length
+          Write-Host "MSIX produced: $output ($size bytes)"
+          echo "MSIX_OUTPUT=$output" >> $env:GITHUB_ENV
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChairsideReadyAlert-${{ matrix.arch }}-msix
+          path: ${{ env.MSIX_OUTPUT }}
           if-no-files-found: error

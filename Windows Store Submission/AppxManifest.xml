@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Chairside Ready Alert — MSIX manifest template.
+
+    Three placeholders MUST be replaced with values from Partner Center
+    BEFORE the package is uploaded for Store submission. They are
+    bound cryptographically to your Partner Center app reservation —
+    you cannot make them up.
+
+      Apps and games -> Chairside Ready Alert -> Product management ->
+                                                 App identity (or "Product Identity")
+
+    The three values to copy:
+
+      1. <Identity Name="REPLACE_WITH_PARTNER_CENTER_PACKAGE_IDENTITY_NAME" ...>
+         Partner Center calls this:  Package/Identity/Name
+         Looks like:                 12345FieldcrestDentalPC.ChairsideReadyAlert
+
+      2. <Identity ... Publisher="REPLACE_WITH_PARTNER_CENTER_PUBLISHER" ...>
+         Partner Center calls this:  Package/Identity/Publisher
+         Looks like:                 CN=A1B2C3D4-E5F6-7890-ABCD-EF1234567890
+
+      3. <PublisherDisplayName>REPLACE_WITH_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+         Partner Center calls this:  Package/Properties/PublisherDisplayName
+         Looks like:                 Fieldcrest Dental PC
+
+    Two placeholders are filled in automatically by the GitHub Actions
+    build at packaging time and should NOT be edited:
+
+      VERSION_PLACEHOLDER  -- substituted from version.json + ".0"  (MSIX requires 4 segments)
+      ARCH_PLACEHOLDER     -- substituted with x64 / x86 / arm64 per matrix job
+-->
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="REPLACE_WITH_PARTNER_CENTER_PACKAGE_IDENTITY_NAME"
+    Publisher="REPLACE_WITH_PARTNER_CENTER_PUBLISHER"
+    Version="VERSION_PLACEHOLDER"
+    ProcessorArchitecture="ARCH_PLACEHOLDER" />
+
+  <Properties>
+    <DisplayName>Chairside Ready Alert</DisplayName>
+    <PublisherDisplayName>REPLACE_WITH_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+                 Executable="ChairsideReadyAlert.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+          DisplayName="Chairside Ready Alert"
+          Description="LAN-based alert and messaging tool for dental practices."
+          BackgroundColor="transparent"
+          Square150x150Logo="Assets\Square150x150Logo.png"
+          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+            Wide310x150Logo="Assets\Wide310x150Logo.png"
+            Square71x71Logo="Assets\Square71x71Logo.png"
+            Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- runFullTrust — required for desktop-bridge / PyInstaller-bundled apps.
+         Auto-approved for personal Microsoft Store accounts on submission. -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- privateNetworkClientServer — LAN broadcast (UDP 50506) and TCP (50505)
+         for peer discovery and alert messages. No internet capability declared
+         because the Store build makes no outbound internet calls. -->
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+</Package>
