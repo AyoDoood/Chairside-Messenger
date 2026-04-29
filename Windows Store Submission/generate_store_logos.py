@@ -51,6 +51,7 @@ SIZES = [
     (1080, 1080, "store-promo-1080x1080.png", "high-res square promotional"),
     (1240, 600, "store-hero-1240x600.png", "hero image (Partner Center optional)"),
     (1440, 2160, "store-poster-1440x2160.png", "2:3 portrait poster art @2x"),
+    (1920, 1080, "store-hero-1920x1080.png", "16:9 hero / wide poster (Partner Center)"),
 ]
 
 BACKGROUND = (255, 255, 255, 255)  # opaque white — Store-friendly across themes
