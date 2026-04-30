@@ -10,3 +10,6 @@ dist/
 
 # macOS
 .DS_Store
+
+# Claude Code local settings (per-project permission allowlist)
+.claude/
