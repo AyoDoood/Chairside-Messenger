@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.19"
+APP_VERSION = "1.0.20"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -140,9 +140,15 @@ BEACON_VERSION = 1
 PEER_STALE_SEC = 12.0
 BUFFER_SIZE = 4096
 CONFIG_FILE = "chairside_ready_alert_config.json"
-INSTANCE_LOCK_FILE = "chairside_messenger.instance.lock"
+# Frozen Store builds get their own lock filename and IPC port so they do not
+# collide with a developer's `python chairside_ready_alert.py` run on the same
+# machine — both installs share %LOCALAPPDATA%\ChairsideReadyAlert\.
+INSTANCE_LOCK_FILE = (
+    "chairside_messenger.instance.store.lock" if IS_FROZEN
+    else "chairside_messenger.instance.lock"
+)
 FOCUS_IPC_HOST = "127.0.0.1"
-FOCUS_IPC_PORT = 59661
+FOCUS_IPC_PORT = 59662 if IS_FROZEN else 59661
 FOCUS_IPC_TOKEN = "CHAIRSIDE_FOCUS_V1"
 
 
@@ -4028,7 +4034,18 @@ def _run_subscription_paywall(root: tk.Tk) -> bool:
     sh = win.winfo_screenheight()
     win.geometry(f"+{(sw - w) // 2}+{(sh - h) // 3}")
 
-    win.transient(root)
+    # Force the paywall to the foreground; transient(root) is intentionally
+    # NOT called because it would suppress the taskbar entry, leaving users
+    # with no way to find the window if it ends up behind another app.
+    win.deiconify()
+    win.lift()
+    try:
+        win.focus_force()
+    except tk.TclError:
+        pass
+    win.attributes("-topmost", True)
+    win.after(500, lambda: win.attributes("-topmost", False))
+
     try:
         win.grab_set()
     except tk.TclError:
