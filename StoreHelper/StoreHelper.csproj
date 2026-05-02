@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>ChairsideReadyAlert.StoreHelper</RootNamespace>
     <AssemblyName>StoreHelper</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <UseAppHost>true</UseAppHost>
