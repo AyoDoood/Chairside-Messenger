@@ -50,16 +50,20 @@ internal static class Program
         string productId = args[0];
         int exitCode = 3;
 
-        // Invisible same-process anchor window. The Store overlay needs an HWND
-        // owned by the calling process; cross-process HWNDs from the parent app
-        // do not work for IInitializeWithWindow.
+        // Same-process anchor window for the Store purchase overlay. Cross-process
+        // HWNDs from the parent app do not work for IInitializeWithWindow.
+        //
+        // The form is 1x1 with Opacity=0 (invisible to the user) but it is NOT
+        // minimized — the Store SDK appears to refuse to anchor its overlay to
+        // a minimized window. WS_VISIBLE must be set normally. Off-screen
+        // positioning belt-and-suspenders against the user catching a flash.
         var form = new Form
         {
             Opacity = 0.0,
             ShowInTaskbar = false,
             FormBorderStyle = FormBorderStyle.None,
-            StartPosition = FormStartPosition.CenterScreen,
-            WindowState = FormWindowState.Minimized,
+            StartPosition = FormStartPosition.Manual,
+            Location = new System.Drawing.Point(-32000, -32000),
             Width = 1,
             Height = 1,
         };

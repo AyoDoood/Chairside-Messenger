@@ -1,7 +1,7 @@
 {
-  "version": "1.0.26",
+  "version": "1.0.27",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Fixes Microsoft Store purchase still hanging in v1.0.25. Microsoft Store's IInitializeWithWindow requires a same-process anchor window with a running message pump; passing the parent Tk window's HWND across the subprocess boundary doesn't work because the Store SDK validates anchor-window process identity. v1.0.26 makes StoreHelper.exe own its own invisible WinForms window and run Application.Run to drive a message pump while the Store call is in flight. Same-process HWND, real pump, overlay renders properly. No other changes vs. v1.0.25.",
+  "release_notes": "Fixes Microsoft Store purchase still hanging in v1.0.26. The same-process WinForms anchor window was created Minimized, which prevented the Store SDK from validating it as a usable overlay anchor. v1.0.27 removes the Minimized state and instead positions the 1x1 Opacity=0 form off-screen at (-32000, -32000) — invisible to the user but a real WS_VISIBLE window from the SDK's perspective. No other changes vs. v1.0.26.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",
