@@ -32,10 +32,11 @@ practices. With one click, a clinical assistant can let the doctor know
 "Room 2 is ready" — and the doctor's PC pings, blinks, and brings the
 window to the foreground. No server. No cloud account.
 
-Pricing: Free to download. $1.99 / month subscription unlocks the app on up
-to 10 devices linked to your Microsoft account — enough for an entire
-typical dental practice from one purchase. Microsoft Store handles billing
-and you can cancel any time.
+Pricing: $14.99 one-time purchase from the Microsoft Store. No subscription,
+no recurring billing. Once purchased, the app installs on up to 10 Windows
+devices linked to your Microsoft account — enough for an entire typical
+dental practice from one purchase. Microsoft Store handles payment and
+reinstall.
 
 How it works
 Every workstation runs the same app. Each one is given a station label
@@ -72,7 +73,7 @@ support@fieldcrestdental.com
 ## Store listing → Short description / tag line (≤200 chars)
 
 ```
-One-click LAN alerts between dental workstations. $1.99/month covers up to 10 devices on your Microsoft account. Your data stays in your office.
+One-click LAN alerts between dental workstations. $14.99 one-time purchase covers up to 10 devices on your Microsoft account. Your data stays in your office.
 ```
 
 ---
@@ -80,7 +81,7 @@ One-click LAN alerts between dental workstations. $1.99/month covers up to 10 de
 ## Store listing → What's new in this version (≤1,500 chars)
 
 ```
-Initial Microsoft Store release. LAN messaging tool for dental practices, fully peer-to-peer, no cloud, no accounts.
+Pricing simplification: Chairside Ready Alert is now a one-time $14.99 USD purchase instead of a monthly subscription. Once you buy it, the app installs on up to 10 of your Microsoft account's Windows devices — no recurring billing, no trial expiration, no surprise charges. Same LAN-only peer-to-peer alerting, same privacy guarantees.
 ```
 
 ---
@@ -150,7 +151,7 @@ Partner Center's 10,000-char limit.
 |---|---|
 | Developer name | Fieldcrest Dental PC |
 | Support contact info | support@fieldcrestdental.com |
-| Website | https://github.com/AyoDoood/Chairside-Ready-Alert |
+| Website | https://ayodoood.github.io/Chairside-Ready-Alert/ |
 
 ---
 
@@ -179,36 +180,30 @@ Partner Center's 10,000-char limit.
 
 | Field | Value |
 |---|---|
-| Base price | **Free** (the app itself is free to download) |
+| Base price | **$14.99 USD** (one-time purchase) |
 | Markets | All available markets |
 | Audience | Public |
-| Free trial | (configure on the subscription Add-on, not the app) |
+| Free trial | None (or 7-day trial at the listing level if you want to offer one — Microsoft Store handles trial expiry) |
 | Sale pricing | None |
 | Schedule | "Publish as soon as certification passes" |
 | Organizational licensing (volume) | Allow |
 | Family-shared license | Off |
 
-### Subscription Add-on (the actual revenue)
+### Note on the previous subscription Add-ons
 
-After publishing the app at **Free**, create a Subscription Add-on:
+Earlier submissions (v1.0.20–v1.0.28) used a free-app + subscription Add-on
+model. That commerce path got stuck in a `PEX-CatalogAvailabilityDataNotFound`
+state on Microsoft's catalog backend that we could not unstick. v1.0.29
+pivots to one-time paid-app pricing at the listing level, which uses a
+different commerce code path (Get/Buy on the listing) and bypasses the
+broken Add-on catalog state entirely.
 
-> Apps and games → Chairside Ready Alert → **Add-ons** → **New add-on**
-
-| Field | Value |
-|---|---|
-| Product type | Subscription |
-| Product ID | `ChairsideReadyAlert.Subscription.Monthly` (must match exactly — the app code references this string) |
-| Visibility | Public |
-| Pricing | $1.99 USD / month (closest tier to $1.79) |
-| Renewal | Monthly |
-| Free trial period | (optional — 7 days is a common default for first-time subscribers) |
-| Display name | Chairside Ready Alert Monthly |
-| Description | Active subscription unlocks LAN messaging on this Microsoft account's devices. Cancel any time in Microsoft Store. |
-
-The app's launch flow checks the user's Microsoft Store collection for this
-exact Product ID and gates functionality behind an active subscription.
-Microsoft handles billing, renewal, refunds, and cancellation; the app code
-only reads "is the subscription active for this account?"
+The two existing Add-ons under this app
+(`ChairsideReadyAlert.Subscription.Monthly` and
+`ChairsideReadyAlert.SubV2.Monthly`) should be retired once v1.0.29 is
+live: each Add-on → Update → Pricing and availability → Visibility =
+Hidden, **Stop Acquisition off** (Stop Acquisition was observed to
+interfere with catalog reconciliation). Submit each.
 
 ---
 
@@ -224,7 +219,7 @@ only reads "is the subscription active for this account?"
 | User-to-user communication | **Yes** (LAN-only labeled alerts) |
 | Shares user location | No |
 | Personal info collected | No (LAN-only, doesn't leave the network) |
-| In-app purchases | No |
+| In-app purchases | No (paid app, no in-app purchases as of v1.0.29) |
 | Unrestricted internet | No |
 
 Expected resulting rating: **Everyone / 3+**.
@@ -243,7 +238,8 @@ Expected resulting rating: **Everyone / 3+**.
 
 ## Reminder: Things you still have to do by hand
 
-1. Reserve the app name `Chairside Ready Alert` in Partner Center.
+1. Reserve the app name `Chairside Ready Alert` in Partner Center. (Done.)
 2. Capture **3+ screenshots** at 1366×768 or 1920×1080 of the EXE running on a Windows machine. There is no way to fake these from macOS — they have to be real shots of the running app on Windows.
-3. Upload the three architecture EXE bundles from the latest CI run page.
-4. Decide pricing (free or paid).
+3. Upload the three architecture MSIX bundles from the latest CI run page.
+4. Set Pricing and availability → Base price → **$14.99 USD**.
+5. Retire the two stuck subscription Add-ons (Hidden visibility, Stop Acquisition off).

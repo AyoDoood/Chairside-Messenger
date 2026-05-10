@@ -4,78 +4,71 @@ This file contains the exact text to paste into the **"Notes for certification"*
 field of the Partner Center submission, plus context for what the certification
 team should and should not expect to see.
 
-The app is a LAN messaging tool gated behind a Microsoft Store subscription
-Add-on (`ChairsideReadyAlert.Subscription.Monthly`). Two facts the reviewer
-must understand before testing:
+The app is a LAN messaging tool sold as a **one-time paid app** at $14.99 USD
+on the Microsoft Store. There is no subscription, no in-app purchase, no
+paywall window inside the app. Microsoft Store gates installation via the
+standard Get/Buy flow at the listing level — only customers who have paid
+can install. The app launches directly to its main UI on first run.
 
-1. The first screen shown after install is a subscription welcome / paywall.
-   All app functionality is behind it. The reviewer cannot reach the LAN
-   messaging UI without an active subscription on the test Microsoft account.
-2. Even with an active subscription, the LAN messaging features REQUIRE TWO
-   OR MORE DEVICES on the same local subnet and cannot be exercised on a
-   single test VM.
-
-Both of those would cause a naïve "the app doesn't seem to do anything"
-rejection under policy 10.1.2.7. The notes below give the reviewer a test
-path that exercises everything that CAN be tested in a single-VM, no-Store-
-account test environment.
+The LAN messaging core feature requires TWO OR MORE DEVICES on the same local
+subnet and cannot be exercised on a single test VM. Reviewers can only
+confirm the app launches, renders, and quits cleanly in a single-VM
+environment.
 
 ---
 
 ## Paste-into-Partner-Center text
 
 ```
-Chairside Ready Alert is a LAN-based messaging tool for dental practices, gated behind a Microsoft Store subscription Add-on (ChairsideReadyAlert.Subscription.Monthly, $1.99 / month with 7-day free trial). Microsoft Store handles all billing — the app only reads "is the subscription active?" via the Store SDK and gates its UI accordingly.
+Chairside Ready Alert is a LAN-based messaging tool for dental practices, sold as a one-time paid app at $14.99 USD. There is no subscription, no in-app purchase, and no paywall inside the app. Microsoft Store handles purchase via the standard Get/Buy flow at the listing level.
 
-Two things the reviewer needs to know before testing:
+The LAN messaging core feature requires TWO OR MORE DEVICES on the same local subnet and cannot be exercised on a single test VM.
 
-1. The FIRST screen after install is a welcome / paywall window. All app functionality is behind it. This is intentional and is the entire revenue model.
-2. The LAN messaging core feature requires TWO OR MORE DEVICES on the same local subnet and cannot be exercised on a single test VM.
+In a single-VM test environment, please confirm only:
 
-Test path that works in a single-VM environment without a Store subscription:
+1. The app launches and the main window renders.
+2. The tray icon appears in the notification area.
+3. The Settings menu opens.
+4. Right-click on the tray icon shows: Send Ready, Show Main Window, Hide Main Window, Close.
+5. Selecting "Close" from the tray menu shuts the app down cleanly.
 
-A. Launch the app from the Start menu.
-B. The "Welcome to Chairside Ready Alert" window appears with a Modern Blue theme: title, pricing line ("Free for 7 days. $1.99 / month after"), body text describing the LAN messaging product, and three buttons (Start 7-day free trial / Restore purchases / Quit). Verify the window renders cleanly with no clipped text.
-C. Click "Start 7-day free trial". The bundled StoreHelper.exe (a small C# binary in the same MSIX package) invokes Windows.Services.Store.StoreContext.RequestPurchaseAsync, which opens the standard Microsoft Store purchase overlay. Closing that overlay without buying returns to the welcome window — verify no crash.
-D. Click "Restore purchases". With no active subscription on the signed-in account, the welcome window shows "No active subscription found on this Microsoft account." — verify the message displays and the buttons re-enable.
-E. Click "Quit". The app exits cleanly.
+An empty peer list and inability to send/receive alerts are EXPECTED on a single-machine test — no peer device, nothing to message.
 
-That covers everything that can be exercised without a paid subscription. The behavior beyond the paywall (LAN peer discovery on UDP 50506, alert delivery on TCP 50505, station labels, themes, tray menu) is unchanged from the previously approved v1.0.20 build and cannot be reached without an active subscription on the test account.
-
-Bundled binaries:
-- ChairsideReadyAlert.exe — the Python/Tkinter app (PyInstaller --onedir).
-- StoreHelper.exe — small self-contained .NET 8 helper that performs the IInitializeWithWindow handshake the Store SDK requires for purchase calls (Python's winrt projection cannot reach IInitializeWithWindow because it's classic COM). The helper has no UI of its own and exits immediately after the Store call completes; it makes no internet calls beyond what the Microsoft Store SDK does.
-
-Network: LAN UDP broadcast on port 50506 (peer discovery) and LAN TCP on port 50505 (alert delivery). No outbound internet calls in normal operation. The Store build has no in-app self-update — updates are delivered through the Store channel only.
+Network: the app uses LAN UDP broadcast on port 50506 and LAN TCP on 50505. It makes no outbound internet connections in normal operation. The Store build has no in-app self-update; updates are delivered through the Store channel only.
 
 The runFullTrust restricted capability is declared because this is a Python/Tkinter desktop app packaged as MSIX (desktop bridge). Standard for any PyInstaller-bundled MSIX submission — the bundled Python interpreter and Tkinter GUI cannot run inside UWP sandboxing.
 
 Privacy policy: https://ayodoood.github.io/Chairside-Ready-Alert/PRIVACY_POLICY.html
-FAQ:            https://ayodoood.github.io/Chairside-Ready-Alert/FAQ.html
 Support:        support@fieldcrestdental.com
 ```
 
 ---
 
-## Why this matters
+## What changed vs. previous submissions (context for reviewers)
 
-Subscription-gated apps where the paywall is the first screen are a known
-trip-hazard for cert review under policy 10.1.2.7 ("App must be fully
-functional"). The reviewer installs, sees a paywall, can't subscribe
-(test accounts don't always have a payment method, or the reviewer
-wasn't given one), and concludes "this app doesn't do anything." The
-notes above pre-empt that by:
+Earlier submissions (v1.0.20 – v1.0.28) used a "free download + subscription
+Add-on" model. The Add-on commerce path was stuck in a persistent
+`PEX-CatalogAvailabilityDataNotFound` backend state in Microsoft's commerce
+catalog that did not respond to any configuration attempted (multiple
+visibility / audience settings on the parent app, two separately-published
+Add-ons with distinct Product IDs, two Microsoft accounts, full clock and
+cache resets). Microsoft Q&A / Partner Center support was unable to be
+reached due to Engage Center routing.
 
-- Stating up front that the paywall IS the entry point (not a bug).
-- Giving a step-by-step test path that completes inside the paywall
-  itself — every step is verifiable without subscribing.
-- Acknowledging that LAN messaging cannot be tested in a single-VM
-  environment, so the reviewer doesn't search for it past the paywall.
+v1.0.29 pivots to **one-time paid at $14.99**. This uses the standard
+Microsoft Store listing-level pricing (the Get/Buy button on the listing),
+not an Add-on. The app no longer has a paywall window, no longer ships a
+StoreHelper.exe binary, and no longer calls
+`Windows.Services.Store.StoreContext.RequestPurchaseAsync`. It is
+functionally identical to the previously-approved v1.0.20 build with the
+welcome / paywall removed and updates / bug fixes applied.
 
-The first rejection of v1.0.27 (under 10.1.2.7) used the old cert notes
-that pre-dated the paywall. The reviewer was told to test peer messaging
-they couldn't reach. Replacing the notes block with the one above is
-sufficient — no app changes needed.
+The two existing in-app subscription Add-ons under this app
+(`ChairsideReadyAlert.Subscription.Monthly` and
+`ChairsideReadyAlert.SubV2.Monthly`) will be retired (Hidden visibility,
+Stop Acquisition off — Stop Acquisition was observed to interfere with
+catalog reconciliation in earlier debugging) once v1.0.29 is approved
+and live.
 
 ## What you fill in elsewhere on the submission form
 
@@ -85,43 +78,15 @@ sufficient — no app changes needed.
 | Category | Productivity |
 | Subcategory | Communication (closest match) |
 | Privacy policy URL | https://ayodoood.github.io/Chairside-Ready-Alert/PRIVACY_POLICY.html |
-| Website URL | https://github.com/AyoDoood/Chairside-Ready-Alert  ⚠️ see "URL safety flag" below |
+| Website URL | https://ayodoood.github.io/Chairside-Ready-Alert/ |
 | Support contact | support@fieldcrestdental.com |
 | System requirements | Windows 10 version 17763.0 or higher |
 | Architectures submitted | x64, x86, arm64 (separate packages — do NOT mark as `neutral`) |
 | Age rating | Submit IARC questionnaire; expect ~3+ (no objectionable content) |
-| Pricing | Free download; subscription Add-on at $1.99 / month with 7-day trial |
-
-## URL safety flag (`fieldcrestdental.com`)
-
-Microsoft Defender SmartScreen flagged the website URL on the Store
-listing. SmartScreen rejects URLs for any of:
-
-- Recently registered domain (low trust score by default).
-- Parked / "under construction" page with no real content.
-- Hosted on a provider that's been previously abused.
-- A genuine malicious classification (rare for legitimate dental
-  practice sites).
-
-**Fastest fix: replace the website URL field on the listing with one
-that already has SmartScreen reputation:**
-
-- `https://github.com/AyoDoood/Chairside-Ready-Alert` (the project repo
-  — high SmartScreen trust because GitHub is universally allowlisted),
-  or
-- `https://ayodoood.github.io/Chairside-Ready-Alert/` (the GitHub Pages
-  documentation site — also GitHub-hosted, high trust).
-
-Either is sufficient and matches what the existing
-`STORE_LISTING_DRAFT.md` already lists as the recommended Website value.
-Resubmit with the swapped URL and the SmartScreen flag clears.
-
-**If you specifically want `fieldcrestdental.com` on the listing:**
-verify the site is actually live with substantive content (not parked),
-then request a SmartScreen review at
-`https://www.microsoft.com/en-us/wdsi/filesubmission/exemption` —
-classify the URL, explain the legitimate use, wait 1-3 business days
-for a manual review.
+| **Pricing** | **$14.99 USD, one-time purchase** |
+| Free trial | (your call — Microsoft Store supports 7-day or 30-day trial periods at the listing level. None required.) |
+| Markets | All available worldwide |
+| Audience / Visibility | Public (or Hidden if you still want soft-launch) |
 
 ## Capabilities to declare in the manifest
 

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.28",
+  "version": "1.0.29",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Switches the Microsoft Store subscription Add-on Product ID from ChairsideReadyAlert.Subscription.Monthly to ChairsideReadyAlert.SubV2.Monthly. The original Add-on Product ID hit a persistent PEX-CatalogAvailabilityDataNotFound state in Microsoft's catalog backend (Add-on tile not surfacing on the parent app's Store listing, RequestPurchaseAsync returning the catalog error) that did not respond to any visibility, audience, or markets configuration tried — including removing Stop Acquisition from the retired wrong-ID Add-on. Switching to a fresh Product ID lets the catalog establish a new association from a clean slate. No other code changes vs. v1.0.27.",
+  "release_notes": "Pivots the Microsoft Store distribution model from 'free download + subscription Add-on' to a one-time paid app at $14.99 USD. The subscription Add-on commerce path was stuck in a persistent PEX-CatalogAvailabilityDataNotFound state on Microsoft's catalog backend that did not respond to any configuration attempted (multiple visibility / audience settings, two Add-on Product IDs, two Microsoft accounts). The paid-app path uses Microsoft Store's standard Get/Buy flow at the listing level and does not depend on the broken Add-on catalog. Removes the welcome / paywall window, the StoreHelper.exe C# helper binary, the .NET 8 build steps from CI, and the winrt-* Python dependencies. Net code reduction is roughly 350 lines plus a deleted directory.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

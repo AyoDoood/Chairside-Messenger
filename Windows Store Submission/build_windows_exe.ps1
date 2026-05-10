@@ -1,7 +1,6 @@
 param(
     [string]$PythonExe = "py",
-    [string[]]$PythonArgs = @(),
-    [string]$StoreHelperExe = ""
+    [string[]]$PythonArgs = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,16 +32,6 @@ Write-Info "Checking Python launcher..."
 Write-Info "Installing/updating build dependencies..."
 & $PythonExe @PythonArgs -m pip install --upgrade pip
 & $PythonExe @PythonArgs -m pip install --upgrade pyinstaller pystray pillow cairosvg certifi
-# winrt-* packages are needed by the Microsoft Store subscription gate. Pip-install
-# is best-effort: not all of these are guaranteed to wheel cleanly on all Windows
-# Python ABIs, but pyinstaller's --collect-submodules below picks up whatever is
-# importable. The subscription module itself imports lazily and falls back to
-# offline cache if the import fails.
-& $PythonExe @PythonArgs -m pip install --upgrade `
-    "winrt-runtime" `
-    "winrt-Windows.Foundation" `
-    "winrt-Windows.Foundation.Collections" `
-    "winrt-Windows.Services.Store"
 
 Write-Info "Cleaning previous build artifacts..."
 if (Test-Path ".\build") { Remove-Item ".\build" -Recurse -Force }
@@ -61,30 +50,12 @@ Write-Info "Building Windows executable (onedir)..."
   --collect-submodules pystray `
   --collect-submodules PIL `
   --collect-data certifi `
-  --collect-submodules winrt `
-  --collect-submodules "winrt.windows.services.store" `
   --add-data "$licensesDir;licenses" `
   "$appScript"
 
 $exePath = Join-Path $scriptDir "dist\ChairsideReadyAlert\ChairsideReadyAlert.exe"
 if (-not (Test-Path $exePath)) {
     throw "Build finished but EXE was not found at: $exePath"
-}
-
-# StoreHelper.exe is a tiny C# binary that does the IInitializeWithWindow handshake
-# the Microsoft Store SDK requires for purchase-overlay calls (see StoreHelper/Program.cs).
-# Python's winrt projection cannot reach IInitializeWithWindow because it is classic COM,
-# not WinRT — without this shim the purchase call fails with RPC_E_WRONG_THREAD.
-if ($StoreHelperExe) {
-    if (-not (Test-Path $StoreHelperExe)) {
-        throw "StoreHelperExe was specified but the file does not exist: $StoreHelperExe"
-    }
-    $distDir = Split-Path -Parent $exePath
-    $destExe = Join-Path $distDir "StoreHelper.exe"
-    Copy-Item -Path $StoreHelperExe -Destination $destExe -Force
-    Write-Info "Copied StoreHelper.exe ($((Get-Item $destExe).Length) bytes) into dist bundle: $destExe"
-} else {
-    Write-Warning "StoreHelperExe not provided — Microsoft Store purchase calls will fail in the resulting build. This is fine for non-Store builds, but a Store/MSIX submission needs the helper bundled."
 }
 
 Write-Info "Build complete."
