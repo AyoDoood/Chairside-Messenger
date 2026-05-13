@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.31"
+APP_VERSION = "1.0.32"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -1618,7 +1618,9 @@ class ChairsideReadyAlertApp:
             # paint status items.
             try:
                 from Foundation import NSRunLoop, NSDate  # type: ignore
-                NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
+                import objc  # type: ignore
+                with objc.autorelease_pool():
+                    NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
             except Exception:
                 pass
             self.root.after(200, self._pump_macos_runloop)
@@ -1640,7 +1642,12 @@ class ChairsideReadyAlertApp:
             return
         try:
             from Foundation import NSRunLoop, NSDate  # type: ignore
-            NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.0))
+            import objc  # type: ignore
+            # Drain the autoreleased NSDate (and any objects autoreleased by
+            # runUntilDate_) each tick. Without this, Tk-driven apps leak VM
+            # until macOS refuses further allocation and the process aborts.
+            with objc.autorelease_pool():
+                NSRunLoop.mainRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.0))
         except Exception:
             pass
         if not self._quitting and self._mac_status_item is not None:
