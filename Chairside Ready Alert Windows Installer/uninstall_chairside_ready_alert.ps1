@@ -32,7 +32,7 @@ $regKey             = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall
 function Write-Info($msg) { Write-Host "[Uninstall] $msg" }
 
 # When triggered by Apps & Features, this script is running FROM inside the install
-# dir we're about to delete — Windows won't let us delete an executing file. Relocate
+# dir we're about to delete -- Windows won't let us delete an executing file. Relocate
 # to %TEMP% on first run, then re-exec from there.
 if ($PSCommandPath -and ($PSCommandPath -like "$installDir\*")) {
     $tempScript = Join-Path $env:TEMP ("uninstall_chairside_ready_alert_" + [System.Guid]::NewGuid().ToString() + ".ps1")
@@ -59,8 +59,20 @@ if (-not $Force) {
 
 Write-Info "Stopping any running Chairside Ready Alert instance..."
 try {
+    # Match the Python process running the app -- require the literal
+    # 'chairside_ready_alert.py' filename. A looser 'chairside_ready_alert'
+    # match would also hit this script's own PowerShell command line
+    # ('...\uninstall_chairside_ready_alert.ps1') and Stop-Process would
+    # kill the uninstaller itself before reaching any cleanup step. The
+    # explicit -notmatch on 'uninstall_chairside_ready_alert' and the
+    # $PID exclusion are belt-and-suspenders.
     Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match "chairside_ready_alert" } |
+        Where-Object {
+            $_.CommandLine -and
+            $_.CommandLine -match 'chairside_ready_alert\.py' -and
+            $_.CommandLine -notmatch 'uninstall_chairside_ready_alert' -and
+            $_.ProcessId -ne $PID
+        } |
         ForEach-Object {
             try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
         }

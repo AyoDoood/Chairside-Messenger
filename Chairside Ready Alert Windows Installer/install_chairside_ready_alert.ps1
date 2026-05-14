@@ -204,7 +204,7 @@ New-NetFirewallRule -DisplayName '$udpName' -Group '$group' -Direction Inbound -
         return
     }
 
-    # Not elevated — spawn an elevated child PowerShell for just this step. The user
+    # Not elevated -- spawn an elevated child PowerShell for just this step. The user
     # will see one UAC prompt. If they dismiss it, the app still works but Windows
     # will prompt them on first launch instead.
     Write-Info "Adding Windows Firewall rules (you'll see a UAC prompt)..."
@@ -220,7 +220,7 @@ New-NetFirewallRule -DisplayName '$udpName' -Group '$group' -Direction Inbound -
             Write-Host "[Chairside Ready Alert] Warning: firewall rule script exited with code $($proc.ExitCode)." -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "[Chairside Ready Alert] Skipped firewall rules (UAC declined or unavailable). Windows will ask once on first launch — choose 'Private networks' and click Allow." -ForegroundColor Yellow
+        Write-Host "[Chairside Ready Alert] Skipped firewall rules (UAC declined or unavailable). Windows will ask once on first launch -- choose 'Private networks' and click Allow." -ForegroundColor Yellow
     } finally {
         Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
     }
