@@ -121,7 +121,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.47"
+APP_VERSION = "1.0.48"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -2454,9 +2454,25 @@ class ChairsideReadyAlertApp:
             if not rp:
                 continue
             if os.path.isabs(rp) or ".." in rp or "/" in rp or "\\" in rp:
+                # Unsafe paths still hard-fail — these would let a hostile
+                # manifest write outside the user-data directory. No legit
+                # release uses them.
                 raise ValueError(f"Unsafe update path in manifest: {rp!r}")
             if rp not in UPDATE_ALLOWED_FILES:
-                raise ValueError(f"Update path is not allowed: {rp!r}")
+                # An UNKNOWN filename in the manifest used to hard-fail and
+                # kill the whole update batch, which trapped users on old
+                # versions whenever we added a new auxiliary file to the
+                # repo (ready_animations.py in 1.0.41 broke every direct
+                # installer client until 1.0.47). Now we skip the entry
+                # with a startup-log warning and let the rest of the
+                # update proceed — including any chairside_ready_alert.py
+                # change that broadens the whitelist for next time.
+                _append_startup_log(
+                    f"Manifest update skipped: '{rp}' is not in this "
+                    f"version's UPDATE_ALLOWED_FILES whitelist. The file "
+                    f"will be picked up after the next app update."
+                )
+                continue
             normalized.append({"path": rp, "url": e["url"], "sha256": e["sha256"]})
 
         # Stable order: keep app first so restart prompt is intuitive.
