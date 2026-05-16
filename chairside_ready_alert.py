@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.39"
+APP_VERSION = "1.0.40"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -3042,9 +3042,14 @@ class ChairsideReadyAlertApp:
         header.pack(fill="x", pady=(0, 12))
         ttk.Label(header, text="Chairside Ready Alert", style="Title.TLabel").pack(anchor="w")
 
-        # Top row: Station Setup | Ready Messages
+        # Top row: Station Setup | Ready Messages.
+        # Expands vertically so the Ready Messages log absorbs any extra
+        # window height that isn't claimed by the Send Message card below.
+        # The Send Message card sizes to its content (see below), so when
+        # there are few peers detected the log grows taller; when there are
+        # many peers the Send Message card grows and the log shrinks.
         top_row = tk.Frame(main, bg=abg)
-        top_row.pack(fill="x", pady=(0, 10))
+        top_row.pack(fill="both", expand=True, pady=(0, 10))
         self._main_shell_frames = (main, header, top_row)
 
         # Station Setup — compact left card
@@ -3154,15 +3159,23 @@ class ChairsideReadyAlertApp:
         self._ready_wrap.bind("<Configure>", _size_ready_btn)
         self._buttons.append(ready_btn)
 
-        # Send Message card
+        # Send Message card.
+        # fill="x" without expand=True so the card sizes to its content (the
+        # checkbox grid). RoundedCard's _on_inner_resize already makes the
+        # canvas track the inner frame's height, so the card grows and shrinks
+        # automatically as peers come and go on the LAN. The visible padding
+        # inside the card stays consistent (the card's padding=14 plus the
+        # small targets_frame bottom pad below) regardless of peer count.
         _mc = RoundedCard(main, bg=cbg, outer_bg=abg, radius=12, padding=14, border=cborder)
-        _mc.pack(fill="both", expand=True)
+        _mc.pack(fill="x")
         self._cards.append(_mc)
         msg = _mc.inner_frame
 
         ttk.Label(msg, text="Send Message", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
         self.targets_frame = tk.Frame(msg, bg=cbg)
-        self.targets_frame.pack(fill="x")
+        # pady=(0, 6) below the targets grid keeps the visible space under the
+        # last checkbox row roughly matching the space above the header.
+        self.targets_frame.pack(fill="x", pady=(0, 6))
         self._refresh_target_checkboxes([])
 
     def _refresh_lan_status_banner(self) -> None:
