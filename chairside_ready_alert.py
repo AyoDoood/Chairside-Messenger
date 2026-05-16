@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.38"
+APP_VERSION = "1.0.39"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -3549,44 +3549,79 @@ class ChairsideReadyAlertApp:
             self._diag_text.see("end")
             self._diag_text.configure(state="disabled")
 
-    def _append_ready_log(self, text: str) -> None:
-        """Main panel: only Ready traffic (timestamp + text). Outgoing path —
-        no visual emphasis, but the line is persisted to ready_log.txt so it
-        survives an app close / system restart within the same calendar day."""
+    def _append_ready_log(self, text: str, persist: bool = True) -> None:
+        """Outgoing Ready log path: no visual emphasis (no recent1/recent2 tag).
+        The line is inserted ABOVE the existing recent2 emphasis tier (or above
+        recent1 if there is no recent2 yet, or at the very end if neither
+        exists). This keeps the two bolded incoming lines pinned to the bottom
+        of the log even after the user sends a Ready themselves — at the cost
+        of putting outgoing entries momentarily out of chronological order
+        until another incoming Ready arrives.
+
+        persist=False is used by _load_ready_log when replaying entries on
+        startup so we don't re-write to disk on every restored line."""
+        # Pick the insert position based on the current emphasis state.
+        marks = self.log.mark_names()
+        if "recent2_start" in marks:
+            insert_at = self.log.index("recent2_start")
+        elif "recent1_start" in marks:
+            insert_at = self.log.index("recent1_start")
+        else:
+            insert_at = "end"
+
         self.log.configure(state="normal")
-        self.log.insert("end", text.rstrip() + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
-        self._persist_ready_log_line(text)
+        try:
+            self.log.insert(insert_at, text.rstrip() + "\n")
+            self.log.see("end")
+        finally:
+            self.log.configure(state="disabled")
+
+        if persist:
+            self._persist_ready_log_line(text, direction="OUT")
 
     # ---------- Persistent Ready log (survives restart, resets daily) ----------
     #
-    # On-disk format is a tiny plain-text file at <user_data_dir>/ready_log.txt:
+    # On-disk format is a tab-separated text file at <user_data_dir>/ready_log.txt:
     #
     #     DATE:2026-05-16
-    #     [02:30 PM] Room 1: Ready
-    #     [02:47 PM] Dr. Pat → Room 2: Ready
+    #     IN<TAB>[02:30 PM] Room 1: Ready
+    #     IN<TAB>[02:35 PM] Room 2: Ready
+    #     OUT<TAB>[02:40 PM] Ready → All
+    #
+    # The direction prefix (IN / OUT) lets _load_ready_log replay each line
+    # through the same code path that handled it live: incoming lines go through
+    # _append_incoming_ready_log (which demotes prior recent1 → recent2 and
+    # tags the new line as recent1), and outgoing lines go through
+    # _append_ready_log (which inserts above the existing emphasis tier). The
+    # net effect is that the visual state immediately after startup matches the
+    # visual state immediately before shutdown — same two lines bolded, same
+    # order, same colors.
+    #
+    # Legacy v1.0.38 files (no prefix) are restored as plain text — best we
+    # can do without direction info. New entries from v1.0.39 onward use the
+    # tab-prefixed format.
     #
     # On launch, the file is read: if the header date matches today's local
-    # date, the body lines are restored into the Text widget as plain (older-
-    # tier) entries. If the date differs, the file is removed and the log
-    # starts empty. While running, a 60-second timer detects when the local
-    # date rolls over (midnight or DST adjustment) and clears both the widget
-    # and the file. This works the same on macOS and Windows because it uses
-    # only the standard library and the existing _user_data_dir() helper.
+    # date, the body lines are restored. If the date differs, the file is
+    # removed and the log starts empty. While running, a 60-second timer
+    # detects when the local date rolls over (midnight or DST adjustment) and
+    # clears both the widget and the file. Works identically on macOS and
+    # Windows because it uses only the standard library plus _user_data_dir().
 
     def _ready_log_path(self) -> str:
         return os.path.join(_user_data_dir(), "ready_log.txt")
 
-    def _persist_ready_log_line(self, text: str) -> None:
-        """Append one log line to ready_log.txt, writing a fresh DATE header
-        first if the previous file is from an earlier day (or doesn't exist).
-        Best-effort: filesystem errors are swallowed."""
+    def _persist_ready_log_line(self, text: str, direction: str = "OUT") -> None:
+        """Append one log line to ready_log.txt with an IN/OUT prefix, writing
+        a fresh DATE header first if the previous file is from an earlier day
+        (or doesn't exist). Best-effort: filesystem errors are swallowed."""
         path = self._ready_log_path()
         today = _today_iso()
         line = text.rstrip()
         if not line:
             return
+        if direction not in ("IN", "OUT"):
+            direction = "OUT"
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             existing_date = self._read_ready_log_date(path)
@@ -3595,7 +3630,7 @@ class ChairsideReadyAlertApp:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(f"DATE:{today}\n")
             with open(path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+                f.write(f"{direction}\t{line}\n")
         except OSError:
             pass
 
@@ -3615,10 +3650,17 @@ class ChairsideReadyAlertApp:
 
     def _load_ready_log(self) -> None:
         """Restore today's persisted Ready log into the Text widget on launch.
-        Called once after the UI is built. Stale (older-day) logs are deleted
-        so the new session starts clean. Restored lines do NOT receive the
-        recent1/recent2 emphasis — they're cold entries from before, not new
-        arrivals."""
+        Called once after the UI is built and after _apply_theme has configured
+        the recent1/recent2/recent1_flash tags. Stale (older-day) logs are
+        deleted so the new session starts clean.
+
+        Each persisted line carries an IN/OUT prefix (since v1.0.39). Replay
+        runs them through the same appender as the live path with animate=
+        False / persist=False, so the visual state immediately after startup
+        matches the visual state at shutdown — the last incoming line is
+        recent1, the second-to-last incoming is recent2, everything else is
+        plain. Lines from a v1.0.38 file (no prefix) restore as plain text.
+        """
         path = self._ready_log_path()
         today = _today_iso()
         self._last_log_date = today  # baseline for the rollover check
@@ -3639,14 +3681,30 @@ class ChairsideReadyAlertApp:
             return
         if len(lines) < 2:
             return  # Just a header, no body.
-        self.log.configure(state="normal")
-        try:
-            for line in lines[1:]:
-                if line:
+        for line in lines[1:]:
+            if not line:
+                continue
+            if line.startswith("IN\t"):
+                # Incoming — replay through the emphasis path with no flash
+                # animation and no re-persist (we're loading from disk).
+                self._append_incoming_ready_log(
+                    line[len("IN\t"):], animate=False, persist=False,
+                )
+            elif line.startswith("OUT\t"):
+                # Outgoing — replay through the same insert-above-emphasis
+                # path that the live send uses, but skip re-persisting.
+                self._append_ready_log(line[len("OUT\t"):], persist=False)
+            else:
+                # Legacy v1.0.38 row (no prefix) — best-effort plain insert.
+                self.log.configure(state="normal")
+                try:
                     self.log.insert("end", line + "\n")
+                finally:
+                    self.log.configure(state="disabled")
+        try:
             self.log.see("end")
-        finally:
-            self.log.configure(state="disabled")
+        except tk.TclError:
+            pass
 
     def _check_log_rollover(self) -> None:
         """Periodic (every 60s) check that the in-memory log + persistent file
@@ -3684,13 +3742,22 @@ class ChairsideReadyAlertApp:
                 pass
     # ---------- end persistent ready log ----------
 
-    def _append_incoming_ready_log(self, text: str) -> None:
+    def _append_incoming_ready_log(
+        self, text: str, animate: bool = True, persist: bool = True,
+    ) -> None:
         """Append an INCOMING Ready with visual emphasis on the newest line.
-        The previous newest line is demoted to a secondary emphasis tier.
-        The new line plays a smooth background-color flash (theme highlight →
-        log_bg, ~600ms, ease-out cubic) to draw the eye while the font stays
-        static at the final 15pt bold size. Outgoing Ready messages go
-        through _append_ready_log instead — they don't get emphasis.
+        The previous newest line is demoted to a secondary emphasis tier and
+        any prior secondary line drops back to plain. Net result: at most two
+        bolded lines are visible at any moment — the last two incoming Readys.
+
+        animate=True (default) plays the smooth background-color flash
+        (~600ms cubic ease-out). animate=False suppresses it; used by
+        _load_ready_log to restore the previous session's hierarchy without
+        a flash on every cold line.
+
+        persist=True (default) writes the line to ready_log.txt with an IN
+        prefix. persist=False suppresses the write; used during restore so we
+        don't re-write what we just read.
 
         Why a background flash instead of a scale 'pop': Tk font sizes are
         integer-only, so a CSS-style scale animation looks like discrete jumps
@@ -3721,7 +3788,11 @@ class ChairsideReadyAlertApp:
                     self.log.tag_remove("recent1_flash", r1s, r1e)
                     self.log.tag_add("recent2", r1s, r1e)
                     self.log.mark_set("recent2_start", r1s)
-                    self.log.mark_gravity("recent2_start", "left")
+                    # 'right' gravity: when _append_ready_log later inserts an
+                    # outgoing line AT this mark's position, the mark moves
+                    # right past the insertion and stays anchored to the start
+                    # of the (now displaced) recent2 line.
+                    self.log.mark_gravity("recent2_start", "right")
                     self.log.mark_set("recent2_end", r1e)
                     self.log.mark_gravity("recent2_end", "right")
                 except tk.TclError:
@@ -3730,8 +3801,9 @@ class ChairsideReadyAlertApp:
                 self.log.mark_unset("recent1_end")
 
             # Insert the new line and tag the just-inserted range as recent1.
-            # An anchor mark with 'left' gravity stays at the start of the
-            # inserted text — Tk inserts to the right of left-gravity marks.
+            # Anchor with 'left' gravity stays at the start of the inserted
+            # text — Tk inserts to the right of left-gravity marks. The anchor
+            # is temporary and is unset before we set the real recent1_start.
             self.log.mark_set("_insert_anchor", "end - 1c")
             self.log.mark_gravity("_insert_anchor", "left")
             self.log.insert("end", text.rstrip() + "\n")
@@ -3743,7 +3815,10 @@ class ChairsideReadyAlertApp:
             # is what animates; recent1's font and foreground are static.
             self.log.tag_add("recent1_flash", line_start, line_end)
             self.log.mark_set("recent1_start", line_start)
-            self.log.mark_gravity("recent1_start", "left")
+            # 'right' gravity: same reasoning as recent2_start above — keeps
+            # the mark anchored to the recent1 line even after an outgoing
+            # insert that pushes it down.
+            self.log.mark_gravity("recent1_start", "right")
             self.log.mark_set("recent1_end", line_end)
             self.log.mark_gravity("recent1_end", "right")
 
@@ -3751,10 +3826,10 @@ class ChairsideReadyAlertApp:
         finally:
             self.log.configure(state="disabled")
 
-        # Fire the background-color flash animation.
-        self._animate_recent1_flash()
-        # Persist so the line survives a restart within the same calendar day.
-        self._persist_ready_log_line(text)
+        if animate:
+            self._animate_recent1_flash()
+        if persist:
+            self._persist_ready_log_line(text, direction="IN")
 
     @staticmethod
     def _lerp_hex_color(c1: str, c2: str, t: float) -> str:
