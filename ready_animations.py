@@ -1599,10 +1599,6 @@ def draw_anim_stretches(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
     spot1, spot2, spot3 = _random_spots(button, w, h, 3, side)
-    # Smooth wander overlay during stationary phases so the figure doesn't
-    # stand stock-still while stretching. Walks ignore this so the path
-    # stays clean.
-    dx, dy = _drift(button, t, 35, 18)
 
     if (l := _phase(t, 0.00, 0.05)) is not None:
         _emerge(canvas, button, l, side); return
@@ -1613,7 +1609,7 @@ def draw_anim_stretches(canvas, t, w, h, button):
         bend = _ease_in_out(min(1.0, l * 1.5))
         body = _lerp(270, 200, bend)
         arm = _lerp(90, 130, bend)
-        draw_figure_pose(canvas, spot1[0] + dx, spot1[1] + dy,
+        draw_figure_pose(canvas, spot1[0], spot1[1],
                          body_angle=body,
                          left_arm=(arm, arm), right_arm=(arm, arm))
         return
@@ -1637,7 +1633,7 @@ def draw_anim_stretches(canvas, t, w, h, button):
         arm_a = 270 - 35 * side
         arm_b = 270 + 35 * side
         draw_figure_pose(
-            canvas, spot2[0] + dx, spot2[1] + 6 + dy,
+            canvas, spot2[0], spot2[1] + 6,
             body_angle=270 + body_lean,
             left_leg=(lead_upper, lead_lower),
             right_leg=(trail_upper, trail_lower),
@@ -1651,12 +1647,12 @@ def draw_anim_stretches(canvas, t, w, h, button):
         # Side twist: lean L/R over a 3-cycle wave
         twist_phase = l * 3 * math.pi * 2
         lean = math.sin(twist_phase) * 18
-        draw_figure_pose(canvas, spot3[0] + dx, spot3[1] + dy,
+        draw_figure_pose(canvas, spot3[0], spot3[1],
                          body_angle=270 + lean,
                          left_arm=(180, 180), right_arm=(0, 0))
         return
     if (l := _phase(t, 0.80, 0.88)) is not None:
-        _wave_pose(canvas, spot3[0] + dx, spot3[1] + dy, l, side); return
+        _wave_pose(canvas, spot3[0], spot3[1], l, side); return
     if (l := _phase(t, 0.88, 0.94)) is not None:
         _walk(canvas, spot3, edge_xy, l); return
     if (l := _phase(t, 0.94, 1.00)) is not None:
@@ -1739,7 +1735,6 @@ def draw_anim_jacks(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
     spot1, spot2 = _random_spots(button, w, h, 2, side)
-    dx, dy = _drift(button, t, 30, 15)
 
     def _jack(canvas, x, y, l_in_phase, cycles):
         # Phase goes 0..1 within a single rep; we run `cycles` reps total.
@@ -1765,13 +1760,13 @@ def draw_anim_jacks(canvas, t, w, h, button):
     if (l := _phase(t, 0.05, 0.13)) is not None:
         _walk(canvas, edge_xy, spot1, l); return
     if (l := _phase(t, 0.13, 0.42)) is not None:
-        _jack(canvas, spot1[0] + dx, spot1[1] + dy, l, 4); return
+        _jack(canvas, spot1[0], spot1[1], l, 4); return
     if (l := _phase(t, 0.42, 0.50)) is not None:
         _walk(canvas, spot1, spot2, l); return
     if (l := _phase(t, 0.50, 0.82)) is not None:
-        _jack(canvas, spot2[0] + dx, spot2[1] + dy, l, 4); return
+        _jack(canvas, spot2[0], spot2[1], l, 4); return
     if (l := _phase(t, 0.82, 0.90)) is not None:
-        _wave_pose(canvas, spot2[0] + dx, spot2[1] + dy, l, side); return
+        _wave_pose(canvas, spot2[0], spot2[1], l, side); return
     if (l := _phase(t, 0.90, 0.96)) is not None:
         _walk(canvas, spot2, edge_xy, l); return
     if (l := _phase(t, 0.96, 1.00)) is not None:
@@ -1905,7 +1900,6 @@ def draw_anim_weights(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
     spot1, spot2 = _random_spots(button, w, h, 2, side)
-    dx, dy = _drift(button, t, 25, 12)
 
     def _press(canvas, x, y, opened):
         body_lean = _lerp(20, 0, opened)
@@ -1942,7 +1936,7 @@ def draw_anim_weights(canvas, t, w, h, button):
     if (l := _phase(t, 0.13, 0.42)) is not None:
         rep_phase = l * 3 * math.pi
         opened = (math.sin(rep_phase) + 1.0) * 0.5
-        _press(canvas, spot1[0] + dx, spot1[1] + dy, opened); return
+        _press(canvas, spot1[0], spot1[1], opened); return
     if (l := _phase(t, 0.42, 0.52)) is not None:
         # Walk between with arms locked at shoulder level (carrying the bar
         # across the chest for the curl set at spot 2).
@@ -1969,7 +1963,7 @@ def draw_anim_weights(canvas, t, w, h, button):
         # lift type so the second location actually feels new.
         rep_phase = l * 3 * math.pi
         opened = (math.sin(rep_phase) + 1.0) * 0.5
-        x, y = spot2[0] + dx, spot2[1] + dy
+        x, y = spot2[0], spot2[1]
         # Upper arm pinned down at the sides (90°). Forearm rotates from
         # extended-straight-down (90°) up to bent-toward-shoulders (270°-ish).
         # Shoulders stay level, body upright.
@@ -1998,7 +1992,7 @@ def draw_anim_weights(canvas, t, w, h, button):
         return
     if (l := _phase(t, 0.82, 0.88)) is not None:
         # Wipe brow — one hand near head
-        draw_figure_pose(canvas, spot2[0] + dx, spot2[1] + dy,
+        draw_figure_pose(canvas, spot2[0], spot2[1],
                          left_arm=(220, 280), right_arm=(80, 90))
         return
     if (l := _phase(t, 0.88, 0.94)) is not None:
@@ -2015,7 +2009,6 @@ def draw_anim_dance(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
     spot1, spot2 = _random_spots(button, w, h, 2, side)
-    dx, dy = _drift(button, t, 35, 15)
 
     if (l := _phase(t, 0.00, 0.05)) is not None:
         _emerge(canvas, button, l, side); return
@@ -2030,7 +2023,7 @@ def draw_anim_dance(canvas, t, w, h, button):
         arm = math.sin(l * 6 * math.pi + 1.0) * 60
         bounce = -abs(beat) * 5
         draw_figure_pose(
-            canvas, spot1[0] + off + dx, spot1[1] + bounce + dy,
+            canvas, spot1[0] + off, spot1[1] + bounce,
             left_arm=(90 + arm, 90 + arm * 0.6),
             right_arm=(90 - arm, 90 - arm * 0.6),
             # Legs splayed: one leans down-and-to-the-right, the other
@@ -2047,14 +2040,14 @@ def draw_anim_dance(canvas, t, w, h, button):
         leg_lift = max(0, kick) * 35
         opposite = max(0, -kick) * 35
         draw_figure_pose(
-            canvas, spot2[0] + dx, spot2[1] + dy,
+            canvas, spot2[0], spot2[1],
             left_arm=(60, 60), right_arm=(120, 120),
             left_leg=(90 - leg_lift, 90 - leg_lift * 0.8),
             right_leg=(90 + opposite, 90 + opposite * 0.8),
         )
         return
     if (l := _phase(t, 0.85, 0.92)) is not None:
-        _wave_pose(canvas, spot2[0] + dx, spot2[1] + dy, l, side); return
+        _wave_pose(canvas, spot2[0], spot2[1], l, side); return
     if (l := _phase(t, 0.92, 0.97)) is not None:
         _walk(canvas, spot2, edge_xy, l); return
     if (l := _phase(t, 0.97, 1.00)) is not None:

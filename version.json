@@ -1,7 +1,7 @@
 {
-  "version": "1.0.53",
+  "version": "1.0.54",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Default stick-figure character flipped from 'plain' to 'top_hat'. The character preference is stored per-machine in chairside_ready_alert_config.json, so Fieldcrest's Mac install (which had been switched to top_hat via the picker) and the new Windows install (with no character key in its config) were rendering different figures — Mac had the hat, Windows didn't. Changing the default in load_animation_character() / set_character() so any config missing the animation_character key now resolves to top_hat. Existing configs with an explicit animation_character value are not touched — users who picked a different character through the picker keep their pick.",
+  "release_notes": "Dropped the in-activity drift introduced in 1.0.50. The smooth sin-wave wander made the figure visibly slide around while stretching, jumping jacks, doing weights, and dancing — looked twitchy rather than lively. Stationary moves now stay anchored at their spot for the full duration of each pose, the way real exercise looks. Cartwheel is unchanged (it was never given drift since the cartwheel motion is intrinsic). Spots themselves are still randomized per play via _random_spots, so the figure still visits different cross-canvas locations each Ready click — it just holds still once it gets there.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",
