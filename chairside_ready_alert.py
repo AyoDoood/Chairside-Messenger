@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.36"
+APP_VERSION = "1.0.37"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -364,6 +364,10 @@ THEMES: dict[str, dict] = {
         # Ready in the log (and the second-most-recent one too). Darker than
         # 'title' so the message reads as a step beyond the usual brand color.
         "emph_dark": "#1e3a8a",
+        # highlight: starting background color of the recent1 flash animation.
+        # Fades to log_bg over ~600ms. Light enough to read emph_dark text over,
+        # bright enough to catch the eye on arrival.
+        "highlight": "#dbeafe",
     },
     "Sage Clinic": {
         "bg": "#f2f5ee", "card_bg": "#ffffff", "accent": "#4a7c59", "accent_text": "#ffffff",
@@ -371,6 +375,7 @@ THEMES: dict[str, dict] = {
         "log_bg": "#f7faf7", "log_text": "#5a7a5b", "status": "#2d8a4e",
         "input_bg": "#f7faf7", "input_border": "#c8dfc9", "slider_track": "#c8dfc9",
         "emph_dark": "#1b3a26",
+        "highlight": "#d9ecdc",
     },
     "Rose Quartz": {
         "bg": "#fdf2f4", "card_bg": "#ffffff", "accent": "#e11d48", "accent_text": "#ffffff",
@@ -380,6 +385,7 @@ THEMES: dict[str, dict] = {
         # Rose Quartz: title is a bright crimson, not actually dark. Use the
         # near-black 'text' color so the emphasized line still reads as "dark".
         "emph_dark": "#3d0a18",
+        "highlight": "#fde0e7",
     },
 }
 DEFAULT_THEME = "Modern Blue"
@@ -2932,13 +2938,19 @@ class ChairsideReadyAlertApp:
                 theme["log_bg"], theme["log_text"], theme.get("card_border"), theme["card_bg"]
             )
         # Configure the two emphasis tiers for incoming Ready messages.
-        # 'recent1' = newest incoming Ready (large, bold, theme's darkest color).
-        # 'recent2' = second-most-recent (smaller bump, same dark color).
-        # Both tags are re-configured on every theme change so the colors track
-        # the active theme. Bumping the animation sequence aborts any in-flight
-        # pop animation that captured the old color.
+        # 'recent1'       = newest incoming Ready (15pt bold, theme's darkest color).
+        # 'recent2'       = second-most-recent (12pt bold, same dark color).
+        # 'recent1_flash' = a transient background-highlight tag layered on top of
+        #                   recent1. Its background color animates from theme
+        #                   'highlight' down to 'log_bg' over ~600ms whenever a
+        #                   new Ready arrives. Tk text-tag attributes merge, so
+        #                   recent1's font/foreground stick while the flash bg
+        #                   smoothly fades out.
+        # Re-configured on every theme change. Bumping the animation sequence
+        # aborts any in-flight flash that captured the old colors.
         if hasattr(self, "log"):
             emph_dark = theme.get("emph_dark", title_c)
+            log_bg = theme["log_bg"]
             self.log.tag_configure(
                 "recent1",
                 font=_ttk_font(15, "bold"),
@@ -2949,6 +2961,9 @@ class ChairsideReadyAlertApp:
                 font=_ttk_font(12, "bold"),
                 foreground=emph_dark,
             )
+            # Reset the flash background to the log's normal background. Any
+            # in-flight animation will see the seq bump and abandon its frames.
+            self.log.tag_configure("recent1_flash", background=log_bg)
             self._recent1_anim_seq = getattr(self, "_recent1_anim_seq", 0) + 1
         if hasattr(self, "status_label"):
             self.status_label.configure(fg=theme["status"], bg=card, font=_ui_font(9, "bold"))
@@ -3515,9 +3530,16 @@ class ChairsideReadyAlertApp:
     def _append_incoming_ready_log(self, text: str) -> None:
         """Append an INCOMING Ready with visual emphasis on the newest line.
         The previous newest line is demoted to a secondary emphasis tier.
-        The new line plays a brief 'pop' size animation (8pt → 17pt peak →
-        15pt settled, ~320ms) to draw the eye. Outgoing Ready messages go
-        through _append_ready_log instead — they don't get emphasis."""
+        The new line plays a smooth background-color flash (theme highlight →
+        log_bg, ~600ms, ease-out cubic) to draw the eye while the font stays
+        static at the final 15pt bold size. Outgoing Ready messages go
+        through _append_ready_log instead — they don't get emphasis.
+
+        Why a background flash instead of a scale 'pop': Tk font sizes are
+        integer-only, so a CSS-style scale animation looks like discrete jumps
+        no matter how many frames we run. Background-color interpolation has
+        millions of unique values and animates silky-smooth at 50fps on both
+        Windows and macOS Tk."""
         self.log.configure(state="normal")
         try:
             # Demote the existing recent1 → recent2, and clear the prior recent2.
@@ -3537,7 +3559,9 @@ class ChairsideReadyAlertApp:
                 try:
                     r1s = self.log.index("recent1_start")
                     r1e = self.log.index("recent1_end")
+                    # Drop both the styling tag and any leftover flash tag.
                     self.log.tag_remove("recent1", r1s, r1e)
+                    self.log.tag_remove("recent1_flash", r1s, r1e)
                     self.log.tag_add("recent2", r1s, r1e)
                     self.log.mark_set("recent2_start", r1s)
                     self.log.mark_gravity("recent2_start", "left")
@@ -3558,6 +3582,9 @@ class ChairsideReadyAlertApp:
             line_end = self.log.index("end - 1c")
             self.log.mark_unset("_insert_anchor")
             self.log.tag_add("recent1", line_start, line_end)
+            # The flash tag is applied to the same range. Its background color
+            # is what animates; recent1's font and foreground are static.
+            self.log.tag_add("recent1_flash", line_start, line_end)
             self.log.mark_set("recent1_start", line_start)
             self.log.mark_gravity("recent1_start", "left")
             self.log.mark_set("recent1_end", line_end)
@@ -3567,37 +3594,59 @@ class ChairsideReadyAlertApp:
         finally:
             self.log.configure(state="disabled")
 
-        # Fire the pop animation on the recent1 tag's font.
-        self._animate_recent1_pop()
+        # Fire the background-color flash animation.
+        self._animate_recent1_flash()
 
-    def _animate_recent1_pop(self) -> None:
-        """Pop the 'recent1' tag font from a small starting size up through a
-        peak and settle to the final size, over ~320ms. Reuses a sequence
-        counter to abort superseded animations (e.g., when a newer Ready
-        arrives mid-pop, or when the theme is swapped mid-pop)."""
+    @staticmethod
+    def _lerp_hex_color(c1: str, c2: str, t: float) -> str:
+        """Linear interpolation between two #rrggbb hex colors. t in [0, 1]."""
+        def _parse(c: str) -> tuple[int, int, int]:
+            c = c.lstrip("#")
+            return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+        t = max(0.0, min(1.0, t))
+        r1, g1, b1 = _parse(c1)
+        r2, g2, b2 = _parse(c2)
+        r = int(round(r1 + (r2 - r1) * t))
+        g = int(round(g1 + (g2 - g1) * t))
+        b = int(round(b1 + (b2 - b1) * t))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _animate_recent1_flash(self) -> None:
+        """Smoothly fade the recent1_flash tag's background from theme
+        'highlight' down to 'log_bg' over ~600ms (30 frames at 20ms = 50fps).
+        Uses cubic ease-out so the highlight is most visible immediately on
+        arrival and the tail of the fade is gentle. Reuses an integer
+        sequence counter to abort superseded animations (back-to-back Readys
+        or a theme change mid-fade)."""
         self._recent1_anim_seq = getattr(self, "_recent1_anim_seq", 0) + 1
         seq = self._recent1_anim_seq
 
         theme = getattr(self, "_current_theme", THEMES[DEFAULT_THEME])
-        fg = theme.get("emph_dark", theme["title"])
+        highlight = theme.get("highlight", theme["log_bg"])
+        log_bg = theme["log_bg"]
 
-        # (delay_ms_from_now, font_size_pt) frames. Starts small, scales up to
-        # a peak slightly above the settled size, then eases back. Roughly
-        # equivalent to a CSS scale(0.6) → scale(1.12) → scale(1) keyframe.
-        frames = [(0, 8), (80, 14), (160, 17), (240, 16), (320, 15)]
-        for delay_ms, size in frames:
-            def _frame(s=size, k=seq) -> None:
+        n_frames = 30   # 30 × 20ms = 600ms total
+        frame_ms = 20
+
+        for i in range(n_frames + 1):
+            t = i / n_frames                # 0..1 linear
+            eased = 1.0 - (1.0 - t) ** 3    # cubic ease-out
+            bg = self._lerp_hex_color(highlight, log_bg, eased)
+
+            def _frame(b=bg, k=seq, last=(i == n_frames)) -> None:
                 if k != self._recent1_anim_seq:
                     return  # superseded
                 try:
+                    # On the final frame, snap exactly to log_bg so subsequent
+                    # appends (which inherit the current tag bg) start clean.
                     self.log.tag_configure(
-                        "recent1",
-                        font=_ttk_font(s, "bold"),
-                        foreground=fg,
+                        "recent1_flash",
+                        background=log_bg if last else b,
                     )
                 except tk.TclError:
                     pass
-            self.root.after(delay_ms, _frame)
+
+            self.root.after(i * frame_ms, _frame)
 
     def _open_connection_log_window(self) -> None:
         if self._diag_win is not None and self._diag_win.winfo_exists():
