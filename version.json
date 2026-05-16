@@ -1,7 +1,7 @@
 {
-  "version": "1.0.54",
+  "version": "1.0.55",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Dropped the in-activity drift introduced in 1.0.50. The smooth sin-wave wander made the figure visibly slide around while stretching, jumping jacks, doing weights, and dancing — looked twitchy rather than lively. Stationary moves now stay anchored at their spot for the full duration of each pose, the way real exercise looks. Cartwheel is unchanged (it was never given drift since the cartwheel motion is intrinsic). Spots themselves are still randomized per play via _random_spots, so the figure still visits different cross-canvas locations each Ready click — it just holds still once it gets there.",
+  "release_notes": "Production trigger rules turned back on. AnimationTrigger.TEST_MODE flipped from True (every Ready fires an animation — was set while iterating on choreography) to False (the real rate-limit kicks in). An animation now requires: at least 10 minutes elapsed since the previous qualifying Ready AND a qualifying-send count between 4 and 8 inclusive (the target is re-rolled randomly after each fire). Rapid clicks within the 10-minute window collapse into a single qualifying send so the bonus can't be farmed by spamming. State is in-memory only — restarting the app resets the counter.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",

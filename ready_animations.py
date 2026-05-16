@@ -2248,7 +2248,7 @@ class AnimationTrigger:
     # spacing/count rules. Useful while iterating on animation choreography —
     # the user can mash the Ready button and see something every time. Flip
     # to False before publishing a build for actual customers.
-    TEST_MODE = True
+    TEST_MODE = False
 
     def __init__(self, rng: Optional[random.Random] = None):
         self._rng = rng or random.Random()
