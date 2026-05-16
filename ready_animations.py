@@ -725,14 +725,84 @@ def _lerp_angle(start: float, end: float, t: float) -> float:
 # Walking gait: returns a tuple (left_leg, right_leg, left_arm, right_arm)
 # of joint-angle tuples for a single phase of walking. `phase` is a continuous
 # value (radians). `intensity` scales how much the limbs swing.
+#
+# Pre-1.0.45 this was a plain symmetric sine wave on every joint, which made
+# the figure look mechanical and "frantic". Real walking has:
+#   - Knees that bend more on the FORWARD swing (the foot lifts) and stay
+#     close to straight on the BACK push (planted foot).
+#   - Arms swing OPPOSITE to legs (left arm forward with right leg forward).
+#   - A subtle elbow bend that breathes with the cycle.
+#   - Smaller amplitudes than my previous version had.
+# The function name and return shape are unchanged so existing callers don't
+# need to be touched.
 def _walk_pose(phase: float, intensity: float = 1.0):
-    swing = math.sin(phase) * 22 * intensity
-    arm_swing = math.sin(phase) * 18 * intensity
-    left_leg = (90 - swing, 90 - swing * 0.6)
-    right_leg = (90 + swing, 90 + swing * 0.6)
-    left_arm = (90 + arm_swing, 90 + arm_swing * 0.7)
-    right_arm = (90 - arm_swing, 90 - arm_swing * 0.7)
-    return left_leg, right_leg, left_arm, right_arm
+    s = math.sin(phase)
+    UPPER_SWING = 16 * intensity   # was 22
+    ARM_SWING = 11 * intensity     # was 18
+    KNEE_BEND = 18 * intensity     # new: knee flexion on the forward swing
+    ELBOW_BEND = 5 * intensity     # new: subtle elbow swing
+
+    # Legs swing on opposite phases. Positive s = left leg is forward.
+    left_upper = 90 - s * UPPER_SWING
+    right_upper = 90 + s * UPPER_SWING
+
+    # Knee bend: only on the forward-swinging leg (the foot is off the
+    # ground and the lower leg rotates back from the knee).
+    # Adding to the upper angle rotates the lower leg further from vertical
+    # in the direction that "tucks" the foot up under the body — the visual
+    # cue of a knee bend mid-step.
+    left_bend = max(0.0, s) * KNEE_BEND
+    right_bend = max(0.0, -s) * KNEE_BEND
+    left_lower = left_upper + left_bend
+    right_lower = right_upper + right_bend
+
+    # Arms swing opposite to legs.
+    left_arm_upper = 90 + s * ARM_SWING        # opposite of left leg
+    right_arm_upper = 90 - s * ARM_SWING
+    # Elbow bend follows the same phase but smaller.
+    left_arm_lower = left_arm_upper + s * ELBOW_BEND
+    right_arm_lower = right_arm_upper - s * ELBOW_BEND
+
+    return (
+        (left_upper, left_lower),
+        (right_upper, right_lower),
+        (left_arm_upper, left_arm_lower),
+        (right_arm_upper, right_arm_lower),
+    )
+
+
+# A small wave gesture used by several animations just before the figure
+# walks back to the button. Breaks the fourth wall a little — the figure
+# is acknowledging the user before leaving. `side`=+1 raises the right
+# hand; `side`=-1 raises the left.
+def _wave_pose(canvas, x, y, local_t, side):
+    # Hand sweeps back and forth at ~3 cycles over the gesture's duration.
+    wave_phase = local_t * 6 * math.pi
+    wave_off = math.sin(wave_phase) * 14
+    # Raised arm: upper angled 20° off vertical so it clears the head and
+    # face entirely. The forearm sweeps side-to-side from that anchor.
+    raise_upper = 250 if side > 0 else 290
+    raise_lower = raise_upper + (wave_off * side)
+    # Resting arm: hangs naturally
+    rest_upper = 90 + 5 * (-side)
+    rest_lower = 90 + 3 * (-side)
+    if side > 0:
+        # +1 = wave the figure's "left arm" in our parameter scheme
+        # (left/right here are drawing labels, not the figure's anatomical
+        # sides — they just pair which limb gets which pose)
+        draw_figure_pose(
+            canvas, x, y,
+            body_angle=270,
+            left_arm=(raise_upper, raise_lower),
+            right_arm=(rest_upper, rest_lower),
+        )
+    else:
+        draw_figure_pose(
+            canvas, x, y,
+            body_angle=270,
+            left_arm=(rest_upper, rest_lower),
+            right_arm=(raise_upper, raise_lower),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -752,10 +822,12 @@ def _phase(t: float, t_start: float, t_end: float):
     return (t - t_start) / (t_end - t_start)
 
 
-def _walk(canvas, from_xy, to_xy, local_t, *, gait_speed: float = 18.0):
+def _walk(canvas, from_xy, to_xy, local_t, *, gait_speed: float = 7.0):
     """Draw a walking figure transitioning from from_xy to to_xy as local_t
     goes 0→1. Eased; the legs and arms swing at gait_speed (radians per
-    full local_t)."""
+    full local_t). Default was 18 in 1.0.43 which made the figure look
+    frantic; 7 is closer to a comfortable real-world stride rate given
+    that most walk phases are around 0.05–0.15 of a 7–10s animation."""
     fx, fy = from_xy
     tx, ty = to_xy
     eased = _ease_in_out(local_t)
@@ -1198,57 +1270,40 @@ def _hide_back(canvas, button, local_t, side):
     )
 
 
-# ---- Animation 1: Surprise — short, two-spot "what was that?!" ----
-# Total ~7s. Visits two spots; does a different reaction at each.
+# ---- Animation 1: Surprise — single spot, 5s ----
+# Total 5s. Walks out, hands fly up with "!" floating well above, walks back.
+# Arms angled out to a wide V so they don't cross the head/face line.
 def draw_anim_surprise(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
-    spot1 = (edge_xy[0] + side * 60, button["y"] - 20)
-    spot2 = (edge_xy[0] + side * 180, button["y"] + 40)
+    spot = (edge_xy[0] + side * 110, button["y"] + 5)
 
     if (l := _phase(t, 0.00, 0.10)) is not None:
         _emerge(canvas, button, l, side); return
-    if (l := _phase(t, 0.10, 0.18)) is not None:
-        _walk(canvas, edge_xy, spot1, l); return
-    if (l := _phase(t, 0.18, 0.40)) is not None:
-        # Reaction A: hands fly up, "!" floats above the raised hands
-        jiggle = math.sin(l * 14) * 1.5
+    if (l := _phase(t, 0.10, 0.25)) is not None:
+        _walk(canvas, edge_xy, spot, l); return
+    if (l := _phase(t, 0.25, 0.85)) is not None:
+        # Hands up in a WIDE V so they're clear of the head. Slight jiggle.
+        jiggle = math.sin(l * 12) * 1.5
         draw_figure_pose(
-            canvas, spot1[0], spot1[1] + jiggle,
-            left_arm=(280, 290), right_arm=(260, 250),
+            canvas, spot[0], spot[1] + jiggle,
+            left_arm=(235, 230), right_arm=(305, 310),
         )
-        # Hands extend roughly LEN_BODY + arm length above the hip when the
-        # arms point near-vertically. Put the "!" comfortably above them.
-        excl_top = spot1[1] - LEN_BODY - (LEN_UPPER_ARM + LEN_FOREARM) - 28
-        canvas.create_line(spot1[0], excl_top, spot1[0], excl_top + 16,
+        # "!" floats well above the highest reach of the V'd hands. Hands
+        # peak at neck_y - sin(45°) * 35 ≈ neck_y - 25 above the neck. Put
+        # the "!" comfortably above that, leaving daylight between the
+        # punctuation and the fingertips.
+        excl_top = spot[1] - LEN_BODY - 50
+        canvas.create_line(spot[0], excl_top, spot[0], excl_top + 18,
                            fill=COLOR, width=STROKE, capstyle="round")
         canvas.create_oval(
-            spot1[0] - 2, excl_top + 20, spot1[0] + 2, excl_top + 24,
+            spot[0] - 2, excl_top + 22, spot[0] + 2, excl_top + 26,
             outline=COLOR, fill=COLOR, width=STROKE,
         )
         return
-    if (l := _phase(t, 0.40, 0.50)) is not None:
-        _walk(canvas, spot1, spot2, l); return
-    if (l := _phase(t, 0.50, 0.78)) is not None:
-        # Reaction B: hands on cheeks (bent arms), small hop
-        hop = math.sin(l * 8) * 4
-        draw_figure_pose(
-            canvas, spot2[0], spot2[1] - hop,
-            left_arm=(150, 240), right_arm=(30, 300),
-        )
-        # Two question marks above
-        for off in (-12, 12):
-            qx = spot2[0] + off
-            qy = spot2[1] - LEN_BODY - HEAD_R * 2 - 6
-            canvas.create_arc(qx - 5, qy - 8, qx + 5, qy + 2,
-                              start=200, extent=200, style="arc",
-                              outline=COLOR, width=STROKE)
-            canvas.create_oval(qx - 1, qy + 8, qx + 1, qy + 10,
-                               outline=COLOR, fill=COLOR, width=STROKE)
-        return
-    if (l := _phase(t, 0.78, 0.92)) is not None:
-        _walk(canvas, spot2, edge_xy, l); return
-    if (l := _phase(t, 0.92, 1.00)) is not None:
+    if (l := _phase(t, 0.85, 0.95)) is not None:
+        _walk(canvas, spot, edge_xy, l); return
+    if (l := _phase(t, 0.95, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
@@ -1413,7 +1468,7 @@ def draw_anim_stretches(canvas, t, w, h, button):
         return
     if (l := _phase(t, 0.55, 0.63)) is not None:
         _walk(canvas, spot2, spot3, l); return
-    if (l := _phase(t, 0.63, 0.86)) is not None:
+    if (l := _phase(t, 0.63, 0.80)) is not None:
         # Side twist: lean L/R over a 3-cycle wave
         twist_phase = l * 3 * math.pi * 2
         lean = math.sin(twist_phase) * 18
@@ -1421,7 +1476,9 @@ def draw_anim_stretches(canvas, t, w, h, button):
                          body_angle=270 + lean,
                          left_arm=(180, 180), right_arm=(0, 0))
         return
-    if (l := _phase(t, 0.86, 0.94)) is not None:
+    if (l := _phase(t, 0.80, 0.88)) is not None:
+        _wave_pose(canvas, spot3[0], spot3[1], l, side); return
+    if (l := _phase(t, 0.88, 0.94)) is not None:
         _walk(canvas, spot3, edge_xy, l); return
     if (l := _phase(t, 0.94, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
@@ -1472,7 +1529,7 @@ def draw_anim_juggle(canvas, t, w, h, button):
             y = start[1] - 4 * ARC_HEIGHT * bp * (1 - bp)
             canvas.create_oval(
                 x - BALL_R, y - BALL_R, x + BALL_R, y + BALL_R,
-                outline=COLOR, fill="", width=STROKE,
+                outline=COLOR, fill=COLOR, width=STROKE,
             )
 
     if (l := _phase(t, 0.00, 0.05)) is not None:
@@ -1485,18 +1542,13 @@ def draw_anim_juggle(canvas, t, w, h, button):
         _draw_juggler(l * 0.3, n); return
     if (l := _phase(t, 0.22, 0.86)) is not None:
         _draw_juggler(l, 3); return
-    if (l := _phase(t, 0.86, 0.90)) is not None:
-        # Take a small bow
-        bow = _ease_in_out(l)
-        draw_figure_pose(
-            canvas, spot[0], spot[1],
-            body_angle=_lerp(270, 230, bow),
-            left_arm=(180, 180), right_arm=(0, 0),
-        )
+    if (l := _phase(t, 0.86, 0.92)) is not None:
+        # Wave at the user before walking back
+        _wave_pose(canvas, spot[0], spot[1], l, side)
         return
-    if (l := _phase(t, 0.90, 0.96)) is not None:
+    if (l := _phase(t, 0.92, 0.97)) is not None:
         _walk(canvas, spot, edge_xy, l); return
-    if (l := _phase(t, 0.96, 1.00)) is not None:
+    if (l := _phase(t, 0.97, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
@@ -1509,17 +1561,18 @@ def draw_anim_jacks(canvas, t, w, h, button):
     spot2 = (edge_xy[0] + side * 230, h * 0.55)
 
     def _jack(canvas, x, y, l_in_phase, cycles):
-        jack_phase = l_in_phase * cycles * math.pi
-        opened = (math.sin(jack_phase) + 1.0) * 0.5
-        bounce = opened * -10
-        # Legs spread OUT to each side when opened (one goes left, one goes right).
-        leg_l = _lerp(90, 130, opened)   # bend down-and-out to the right
-        leg_r = _lerp(90, 50, opened)    # bend down-and-out to the left
-        # Arms swing UP and OUT to each side — one to the upper-left, one to
-        # the upper-right. Previously both arms went up-and-slightly-OPPOSITE,
-        # which made them cross over the head.
-        arm_l = _lerp(90, 220, opened)   # up-and-out to the left
-        arm_r = _lerp(90, 320, opened)   # up-and-out to the right
+        # Phase goes 0..1 within a single rep; we run `cycles` reps total.
+        rep = (1 - math.cos(l_in_phase * cycles * 2 * math.pi)) / 2  # 0..1..0 cycle
+        bounce = rep * -10
+        # Legs spread OUT when arms come up.
+        leg_l = _lerp(90, 130, rep)
+        leg_r = _lerp(90, 50, rep)
+        # Arms START on opposite sides (T-pose, 180° and 0°) and swing UP
+        # toward each other, stopping at a wide V (225° and 315°) so they
+        # never come close to the face/head line. Uses shortest-arc lerp
+        # so the path goes through the correct direction.
+        arm_l = _lerp_angle(180, 225, rep)   # left side: T → upper-left V leg
+        arm_r = _lerp_angle(0,   315, rep)   # right side: T → upper-right V leg
         draw_figure_pose(
             canvas, x, y + bounce,
             left_arm=(arm_l, arm_l), right_arm=(arm_r, arm_r),
@@ -1534,16 +1587,21 @@ def draw_anim_jacks(canvas, t, w, h, button):
         _jack(canvas, spot1[0], spot1[1], l, 4); return
     if (l := _phase(t, 0.42, 0.50)) is not None:
         _walk(canvas, spot1, spot2, l); return
-    if (l := _phase(t, 0.50, 0.86)) is not None:
-        _jack(canvas, spot2[0], spot2[1], l, 5); return
-    if (l := _phase(t, 0.86, 0.94)) is not None:
+    if (l := _phase(t, 0.50, 0.82)) is not None:
+        _jack(canvas, spot2[0], spot2[1], l, 4); return
+    if (l := _phase(t, 0.82, 0.90)) is not None:
+        _wave_pose(canvas, spot2[0], spot2[1], l, side); return
+    if (l := _phase(t, 0.90, 0.96)) is not None:
         _walk(canvas, spot2, edge_xy, l); return
-    if (l := _phase(t, 0.94, 1.00)) is not None:
+    if (l := _phase(t, 0.96, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
-# ---- Animation 6: Sleep — long single-spot nap with floating Zs ----
-# Total ~14s. Yawn before laying down, several Zs while asleep.
+# ---- Animation 6: Sleep — single-spot nap with floating Zs ----
+# Total 10s. Yawn → lay down → snore (Zs float up) → wake → walk back.
+# Laying-down pose: arms hugging the sides of the body and legs straight
+# along the body axis, but each limb is slightly splayed off the body
+# line so they're visible separately instead of collapsing onto it.
 def draw_anim_sleep(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
@@ -1554,34 +1612,60 @@ def draw_anim_sleep(canvas, t, w, h, button):
     if (l := _phase(t, 0.05, 0.15)) is not None:
         _walk(canvas, edge_xy, bed, l); return
     if (l := _phase(t, 0.15, 0.22)) is not None:
-        # Yawn: both arms up, head tilted slightly back
+        # Yawn: arms come up in a wide V (clear of head/face), body
+        # tilts back slightly.
         rise = _ease_in_out(l)
-        arm = _lerp(140, 270, rise)
         body = _lerp(270, 265, rise)
+        l_arm = _lerp_angle(90, 240, rise)
+        r_arm = _lerp_angle(90, 300, rise)
         draw_figure_pose(canvas, bed[0], bed[1],
                          body_angle=body,
-                         left_arm=(arm, arm), right_arm=(arm, arm))
+                         left_arm=(l_arm, l_arm),
+                         right_arm=(r_arm, r_arm))
         return
-    if (l := _phase(t, 0.22, 0.28)) is not None:
+    if (l := _phase(t, 0.22, 0.30)) is not None:
         # Lay down: body rotates from vertical (270°) to horizontal via the
         # SHORTEST arc so the figure tilts smoothly instead of flipping
-        # upside-down (the visible glitch in the previous version).
-        target = 180.0 if side > 0 else 0.0
-        angle = _lerp_angle(270.0, target, _ease_in_out(l))
-        hip_y = _lerp(bed[1], bed[1] + 30, _ease_in_out(l))
+        # upside-down. Limbs travel from their standing positions to the
+        # slightly-splayed sleeping pose (see below).
+        rise = _ease_in_out(l)
+        target_body = 180.0 if side > 0 else 0.0
+        angle = _lerp_angle(270.0, target_body, rise)
+        hip_y = _lerp(bed[1], bed[1] + 30, rise)
+        # Splay offsets for the laying pose: arms angle slightly away from
+        # the body, legs slightly the same way so the figure isn't a single
+        # thick stroke.
+        # Body axis when laying = `target_body`. The splayed arm angles are
+        # `target_body ± 12` (arms offset above and below the body line).
+        # Legs at `target_body ± 8` (smaller splay to keep them clearly
+        # 'underneath' the body).
+        end_l_arm = (target_body + 12) % 360
+        end_r_arm = (target_body - 12) % 360
+        end_l_leg = (target_body + 8) % 360
+        end_r_leg = (target_body - 8) % 360
+        l_arm_now = _lerp_angle(90, end_l_arm, rise)
+        r_arm_now = _lerp_angle(90, end_r_arm, rise)
+        l_leg_now = _lerp_angle(90, end_l_leg, rise)
+        r_leg_now = _lerp_angle(90, end_r_leg, rise)
         draw_figure_pose(canvas, bed[0], hip_y,
                          body_angle=angle,
-                         left_arm=(angle, angle), right_arm=(angle, angle),
-                         left_leg=(angle, angle), right_leg=(angle, angle))
+                         left_arm=(l_arm_now, l_arm_now),
+                         right_arm=(r_arm_now, r_arm_now),
+                         left_leg=(l_leg_now, l_leg_now),
+                         right_leg=(r_leg_now, r_leg_now))
         return
-    if (l := _phase(t, 0.28, 0.80)) is not None:
-        # Sleeping: horizontal body, Zs floating up
-        angle = 180 if side > 0 else 0
+    if (l := _phase(t, 0.30, 0.75)) is not None:
+        # Sleeping: horizontal body, splayed limbs, Zs floating up.
+        body_angle = 180.0 if side > 0 else 0.0
+        l_arm = (body_angle + 12) % 360
+        r_arm = (body_angle - 12) % 360
+        l_leg = (body_angle + 8) % 360
+        r_leg = (body_angle - 8) % 360
         hip_y = bed[1] + 30
         draw_figure_pose(canvas, bed[0], hip_y,
-                         body_angle=angle,
-                         left_arm=(angle, angle), right_arm=(angle, angle),
-                         left_leg=(angle, angle), right_leg=(angle, angle))
+                         body_angle=body_angle,
+                         left_arm=(l_arm, l_arm), right_arm=(r_arm, r_arm),
+                         left_leg=(l_leg, l_leg), right_leg=(r_leg, r_leg))
         # Head position: end of body line from hip
         head_x = bed[0] + (LEN_BODY + HEAD_R + 2) * (1 if side > 0 else -1)
         head_y = hip_y
@@ -1601,19 +1685,33 @@ def draw_anim_sleep(canvas, t, w, h, button):
             canvas.create_line(zx, zy + size, zx + size, zy + size,
                                fill=COLOR, width=stroke)
         return
-    if (l := _phase(t, 0.80, 0.87)) is not None:
-        # Wake / stand: rotate body back to vertical via shortest arc
-        start = 180.0 if side > 0 else 0.0
-        angle = _lerp_angle(start, 270.0, _ease_in_out(l))
-        hip_y = _lerp(bed[1] + 30, bed[1], _ease_in_out(l))
+    if (l := _phase(t, 0.75, 0.83)) is not None:
+        # Wake / stand: reverse the lay-down transition
+        rise = _ease_in_out(l)
+        start_body = 180.0 if side > 0 else 0.0
+        angle = _lerp_angle(start_body, 270.0, rise)
+        hip_y = _lerp(bed[1] + 30, bed[1], rise)
+        # Reverse the splay back to standing
+        start_l_arm = (start_body + 12) % 360
+        start_r_arm = (start_body - 12) % 360
+        start_l_leg = (start_body + 8) % 360
+        start_r_leg = (start_body - 8) % 360
+        l_arm_now = _lerp_angle(start_l_arm, 90, rise)
+        r_arm_now = _lerp_angle(start_r_arm, 90, rise)
+        l_leg_now = _lerp_angle(start_l_leg, 90, rise)
+        r_leg_now = _lerp_angle(start_r_leg, 90, rise)
         draw_figure_pose(canvas, bed[0], hip_y,
                          body_angle=angle,
-                         left_arm=(angle, angle), right_arm=(angle, angle),
-                         left_leg=(angle, angle), right_leg=(angle, angle))
+                         left_arm=(l_arm_now, l_arm_now),
+                         right_arm=(r_arm_now, r_arm_now),
+                         left_leg=(l_leg_now, l_leg_now),
+                         right_leg=(r_leg_now, r_leg_now))
         return
-    if (l := _phase(t, 0.87, 0.94)) is not None:
+    if (l := _phase(t, 0.83, 0.90)) is not None:
+        _wave_pose(canvas, bed[0], bed[1], l, side); return
+    if (l := _phase(t, 0.90, 0.96)) is not None:
         _walk(canvas, bed, edge_xy, l); return
-    if (l := _phase(t, 0.94, 1.00)) is not None:
+    if (l := _phase(t, 0.96, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
@@ -1726,21 +1824,24 @@ def draw_anim_weights(canvas, t, w, h, button):
         _hide_back(canvas, button, l, side); return
 
 
-# ---- Animation 8: Little dance — three-spot tour with different moves ----
-# Total ~12s. Side-step at spot 1, kick-line at spot 2, spin at spot 3.
+# ---- Animation 8: Little dance — two-spot tour ----
+# Total 10s. Side-step at spot 1 (with legs splayed for stability/style),
+# kick-line at spot 2, then a wave goodbye. Spin removed — the
+# horizontal-squish-as-rotation effect read as a glitch.
 def draw_anim_dance(canvas, t, w, h, button):
     side = _pick_emerge_side(button, w)
     edge_xy = _emerge_position(button, side, 0.0)
-    spot1 = (edge_xy[0] + side * 90,  h * 0.55)
-    spot2 = (edge_xy[0] + side * 200, h * 0.65)
-    spot3 = (edge_xy[0] + side * 310, h * 0.55)
+    spot1 = (edge_xy[0] + side * 100, h * 0.58)
+    spot2 = (edge_xy[0] + side * 230, h * 0.62)
 
     if (l := _phase(t, 0.00, 0.05)) is not None:
         _emerge(canvas, button, l, side); return
-    if (l := _phase(t, 0.05, 0.13)) is not None:
+    if (l := _phase(t, 0.05, 0.15)) is not None:
         _walk(canvas, edge_xy, spot1, l); return
-    if (l := _phase(t, 0.13, 0.34)) is not None:
-        # Side-step + arm waves
+    if (l := _phase(t, 0.15, 0.40)) is not None:
+        # Side-step with splayed legs (stance: legs angled outward to either
+        # side instead of straight down — gives the figure a more grounded
+        # dance-y posture per user feedback).
         beat = math.sin(l * 6 * math.pi)
         off = beat * 22
         arm = math.sin(l * 6 * math.pi + 1.0) * 60
@@ -1749,11 +1850,15 @@ def draw_anim_dance(canvas, t, w, h, button):
             canvas, spot1[0] + off, spot1[1] + bounce,
             left_arm=(90 + arm, 90 + arm * 0.6),
             right_arm=(90 - arm, 90 - arm * 0.6),
+            # Legs splayed: one leans down-and-to-the-right, the other
+            # down-and-to-the-left. Stable wide stance.
+            left_leg=(105, 105),
+            right_leg=(75, 75),
         )
         return
-    if (l := _phase(t, 0.34, 0.42)) is not None:
+    if (l := _phase(t, 0.40, 0.48)) is not None:
         _walk(canvas, spot1, spot2, l); return
-    if (l := _phase(t, 0.42, 0.62)) is not None:
+    if (l := _phase(t, 0.48, 0.85)) is not None:
         # Kick-line: alternating leg lifts
         kick = math.sin(l * 5 * math.pi)
         leg_lift = max(0, kick) * 35
@@ -1765,21 +1870,11 @@ def draw_anim_dance(canvas, t, w, h, button):
             right_leg=(90 + opposite, 90 + opposite * 0.8),
         )
         return
-    if (l := _phase(t, 0.62, 0.70)) is not None:
-        _walk(canvas, spot2, spot3, l); return
-    if (l := _phase(t, 0.70, 0.88)) is not None:
-        # Spin: horizontal squish to fake rotation around vertical axis
-        spin = (l - 0.5) * 4
-        squish = abs(math.cos(spin * math.pi))
-        draw_figure_pose(
-            canvas, spot3[0], spot3[1],
-            left_arm=(180, 180), right_arm=(0, 0),
-            scale=max(0.25, squish),
-        )
-        return
-    if (l := _phase(t, 0.88, 0.94)) is not None:
-        _walk(canvas, spot3, edge_xy, l); return
-    if (l := _phase(t, 0.94, 1.00)) is not None:
+    if (l := _phase(t, 0.85, 0.92)) is not None:
+        _wave_pose(canvas, spot2[0], spot2[1], l, side); return
+    if (l := _phase(t, 0.92, 0.97)) is not None:
+        _walk(canvas, spot2, edge_xy, l); return
+    if (l := _phase(t, 0.97, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
@@ -1800,21 +1895,23 @@ def draw_anim_cartwheel(canvas, t, w, h, button):
         x = _lerp(launch[0], far[0], eased)
         rot = l * 4 * math.pi * side
         body_angle = (270 + math.degrees(rot)) % 360
-        # Splay arms and legs slightly off the body axis so the figure
-        # doesn't collapse into a single line when its rotation aligns
-        # everything. Each limb gets a small offset on either side of
-        # the body axis (arms one way, legs the other) — making a
-        # recognizable star/cartwheel silhouette throughout the spin.
-        SPLAY = 25
-        l_arm_u = (body_angle - SPLAY) % 360
-        r_arm_u = (body_angle + SPLAY) % 360
-        l_arm_lo = (body_angle - SPLAY * 1.5) % 360
-        r_arm_lo = (body_angle + SPLAY * 1.5) % 360
+        # Arms extend PERPENDICULAR to the body axis (one each side, T-pose
+        # style) rather than along it — this keeps them away from the head's
+        # area at every rotation phase, which is what the user requested.
+        # Legs splay outward from the feet end of the body, like a real
+        # cartwheel where they trail behind in a wide V.
+        l_arm_u = (body_angle - 90) % 360
+        r_arm_u = (body_angle + 90) % 360
+        # Slight forearm flare for visual interest
+        l_arm_lo = (body_angle - 100) % 360
+        r_arm_lo = (body_angle + 100) % 360
+        # Legs at feet-end of body, splayed wide in a V
         leg_base = (body_angle + 180) % 360
-        l_leg_u = (leg_base - SPLAY) % 360
-        r_leg_u = (leg_base + SPLAY) % 360
-        l_leg_lo = (leg_base - SPLAY * 1.5) % 360
-        r_leg_lo = (leg_base + SPLAY * 1.5) % 360
+        LEG_SPLAY = 25
+        l_leg_u = (leg_base - LEG_SPLAY) % 360
+        r_leg_u = (leg_base + LEG_SPLAY) % 360
+        l_leg_lo = (leg_base - LEG_SPLAY * 1.3) % 360
+        r_leg_lo = (leg_base + LEG_SPLAY * 1.3) % 360
         draw_figure_pose(canvas, x, launch[1],
                          body_angle=body_angle,
                          left_arm=(l_arm_u, l_arm_lo),
@@ -1832,18 +1929,18 @@ def draw_anim_cartwheel(canvas, t, w, h, button):
         x = _lerp(far[0], launch[0], l)
         rot = l * 4 * math.pi * (-side)
         body_angle = (270 + math.degrees(rot)) % 360
-        # Same splay as the out-going cartwheel so the figure stays
-        # recognizable through every rotation phase on the return trip.
-        SPLAY = 25
-        l_arm_u = (body_angle - SPLAY) % 360
-        r_arm_u = (body_angle + SPLAY) % 360
-        l_arm_lo = (body_angle - SPLAY * 1.5) % 360
-        r_arm_lo = (body_angle + SPLAY * 1.5) % 360
+        # Same pose family as the outbound cartwheel — arms perpendicular
+        # to body, legs splayed in a V at the feet end.
+        l_arm_u = (body_angle - 90) % 360
+        r_arm_u = (body_angle + 90) % 360
+        l_arm_lo = (body_angle - 100) % 360
+        r_arm_lo = (body_angle + 100) % 360
         leg_base = (body_angle + 180) % 360
-        l_leg_u = (leg_base - SPLAY) % 360
-        r_leg_u = (leg_base + SPLAY) % 360
-        l_leg_lo = (leg_base - SPLAY * 1.5) % 360
-        r_leg_lo = (leg_base + SPLAY * 1.5) % 360
+        LEG_SPLAY = 25
+        l_leg_u = (leg_base - LEG_SPLAY) % 360
+        r_leg_u = (leg_base + LEG_SPLAY) % 360
+        l_leg_lo = (leg_base - LEG_SPLAY * 1.3) % 360
+        r_leg_lo = (leg_base + LEG_SPLAY * 1.3) % 360
         draw_figure_pose(canvas, x, launch[1],
                          body_angle=body_angle,
                          left_arm=(l_arm_u, l_arm_lo),
@@ -1872,12 +1969,13 @@ def draw_anim_yoga(canvas, t, w, h, button):
     if (l := _phase(t, 0.05, 0.13)) is not None:
         _walk(canvas, edge_xy, spot1, l); return
     if (l := _phase(t, 0.13, 0.32)) is not None:
-        # Tree pose
+        # Tree pose — arms in a wide V over the head (NOT straight up, so they
+        # don't visually cross the face/head line).
         breath = math.sin(l * 4) * 2
         draw_figure_pose(canvas, spot1[0], spot1[1] + breath,
                          left_leg=(90, 90),
                          right_leg=(150, 60),
-                         left_arm=(270, 270), right_arm=(270, 270))
+                         left_arm=(240, 240), right_arm=(300, 300))
         return
     if (l := _phase(t, 0.32, 0.40)) is not None:
         _walk(canvas, spot1, spot2, l); return
@@ -1906,15 +2004,18 @@ def draw_anim_yoga(canvas, t, w, h, button):
         return
     if (l := _phase(t, 0.62, 0.70)) is not None:
         _walk(canvas, spot2, spot3, l); return
-    if (l := _phase(t, 0.70, 0.88)) is not None:
-        # Mountain / sun-salutation reach: both arms straight up
+    if (l := _phase(t, 0.70, 0.83)) is not None:
+        # Mountain / sun-salutation reach: arms in a wide V so they clear
+        # the head/face.
         breath = math.sin(l * 4) * 3
         draw_figure_pose(canvas, spot3[0], spot3[1] + breath,
-                         left_arm=(270, 270), right_arm=(270, 270))
+                         left_arm=(240, 240), right_arm=(300, 300))
         return
-    if (l := _phase(t, 0.88, 0.94)) is not None:
+    if (l := _phase(t, 0.83, 0.90)) is not None:
+        _wave_pose(canvas, spot3[0], spot3[1], l, side); return
+    if (l := _phase(t, 0.90, 0.96)) is not None:
         _walk(canvas, spot3, edge_xy, l); return
-    if (l := _phase(t, 0.94, 1.00)) is not None:
+    if (l := _phase(t, 0.96, 1.00)) is not None:
         _hide_back(canvas, button, l, side); return
 
 
@@ -1927,16 +2028,15 @@ def draw_anim_yoga(canvas, t, w, h, button):
 # ---------------------------------------------------------------------------
 
 ANIMATIONS: dict = {
-    "surprise":  {"name": "Surprised!",        "duration_ms": 7000,  "draw_fn": draw_anim_surprise},
-    "newspaper": {"name": "Reads the paper",   "duration_ms": 13000, "draw_fn": draw_anim_newspaper},
-    "stretches": {"name": "Stretches",         "duration_ms": 11000,  "draw_fn": draw_anim_stretches},
-    "juggle":    {"name": "Juggling",          "duration_ms": 9000, "draw_fn": draw_anim_juggle},
-    "jacks":     {"name": "Jumping jacks",     "duration_ms": 10000, "draw_fn": draw_anim_jacks},
-    "sleep":     {"name": "Power nap",         "duration_ms": 14000, "draw_fn": draw_anim_sleep},
-    "weights":   {"name": "Lifts weights",     "duration_ms": 11000, "draw_fn": draw_anim_weights},
-    "dance":     {"name": "Little dance",      "duration_ms": 12000, "draw_fn": draw_anim_dance},
+    "surprise":  {"name": "Surprised!",        "duration_ms": 5000,  "draw_fn": draw_anim_surprise},
+    "stretches": {"name": "Stretches",         "duration_ms": 10000, "draw_fn": draw_anim_stretches},
+    "juggle":    {"name": "Juggling",          "duration_ms": 9000,  "draw_fn": draw_anim_juggle},
+    "jacks":     {"name": "Jumping jacks",     "duration_ms": 9000,  "draw_fn": draw_anim_jacks},
+    "sleep":     {"name": "Power nap",         "duration_ms": 10000, "draw_fn": draw_anim_sleep},
+    "weights":   {"name": "Lifts weights",     "duration_ms": 10000, "draw_fn": draw_anim_weights},
+    "dance":     {"name": "Little dance",      "duration_ms": 10000, "draw_fn": draw_anim_dance},
     "cartwheel": {"name": "Cartwheels",        "duration_ms": 8000,  "draw_fn": draw_anim_cartwheel},
-    "yoga":      {"name": "Yoga poses",        "duration_ms": 13000, "draw_fn": draw_anim_yoga},
+    "yoga":      {"name": "Yoga poses",        "duration_ms": 10000, "draw_fn": draw_anim_yoga},
 }
 
 
