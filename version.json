@@ -1,10 +1,18 @@
 {
-  "version": "1.0.46",
+  "version": "1.0.47",
   "release_page_url": "https://github.com/AyoDoood/Chairside-Ready-Alert/releases",
-  "release_notes": "Test-build for live animation tuning. Three changes: (a) Stretches, Jumping jacks, Lifts weights, Little dance, and Cartwheels are now the default-enabled animations; Surprise, Juggling, Power nap, and Yoga default off (still visible and pickable in the picker — the user can opt them in later). New DEFAULT_ENABLED dict in ready_animations is the single source of truth shared by the picker's checkbox state and the trigger's pick-random-enabled function. (b) Wave gesture slowed from 3 cycles per gesture to 2, so the hand sweeps back and forth twice instead of three times in the same time window — reads as a friendlier 'bye-bye' instead of a frantic flutter. (c) AnimationTrigger gains a TEST_MODE class attribute (default True for this build) that makes on_ready_sent() return True every time — every outgoing Ready click fires a random animation. Flip TEST_MODE to False before publishing a build for end users; the spacing-and-count logic stays in place and resumes once the flag is off.",
+  "release_notes": "Fixes the auto-updater so it actually delivers the whimsy feature. v1.0.41–v1.0.46 added ready_animations.py and ready_animation_picker.py to the repo, but those filenames were never added to UPDATE_ALLOWED_FILES or to version.json's files map, so the auto-updater silently skipped them on every check. Direct-installer users were upgrading chairside_ready_alert.py to code that did 'import ready_animations' against a missing module — the try/except around the import caught the failure and left the trigger permanently disabled with no error log entry. v1.0.47 adds both filenames to the whitelist and the file manifest; on the next launch after upgrade the updater will fetch ready_animations.py and ready_animation_picker.py and write them next to chairside_ready_alert.py in the user-data directory. After that the in-app trigger comes alive — TEST_MODE is still on so every Ready click fires a random animation from the default-enabled set.",
   "files": {
     "chairside_ready_alert.py": {
       "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/chairside_ready_alert.py",
+      "sha256": ""
+    },
+    "ready_animations.py": {
+      "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/ready_animations.py",
+      "sha256": ""
+    },
+    "ready_animation_picker.py": {
+      "url": "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/ready_animation_picker.py",
       "sha256": ""
     },
     "install_chairside_ready_alert.ps1": {

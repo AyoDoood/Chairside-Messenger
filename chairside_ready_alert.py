@@ -121,7 +121,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.46"
+APP_VERSION = "1.0.47"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -132,6 +132,8 @@ IS_FROZEN = getattr(sys, "frozen", False)
 UPDATE_MANIFEST_URL_BUILTIN = "https://raw.githubusercontent.com/AyoDoood/chairside-ready-alert/main/version.json"
 UPDATE_ALLOWED_FILES = {
     "chairside_ready_alert.py",
+    "ready_animations.py",
+    "ready_animation_picker.py",
     "install_chairside_ready_alert.ps1",
     "Install Chairside Ready Alert.bat",
     "Install Chairside Ready Alert macOS.command",
