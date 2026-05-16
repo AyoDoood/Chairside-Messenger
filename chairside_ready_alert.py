@@ -113,7 +113,7 @@ _UI_FAMILY: Optional[str] = None
 
 
 APP_TITLE = "Chairside Ready Alert"
-APP_VERSION = "1.0.37"
+APP_VERSION = "1.0.38"
 # True for PyInstaller-frozen builds (Microsoft Store EXE). The Store install
 # directory is read-only and Store policy prohibits self-update, so the auto-
 # update UI and any "spawn python on the .py file" code paths must be gated
@@ -434,6 +434,28 @@ def _ttk_font(size: int, weight: str = "normal") -> tuple:
 
 def now_str() -> str:
     return datetime.now().strftime("%I:%M:%S %p")
+
+
+def now_str_short() -> str:
+    """Same as now_str but without seconds. Used in the Ready Messages log so
+    timestamps are easier to read at a glance. now_str is preserved for the
+    connection diagnostic log and the peer-message envelope where second-
+    precision is still useful for debugging."""
+    return datetime.now().strftime("%I:%M %p")
+
+
+def _strip_seconds_from_ts(ts: str) -> str:
+    """Normalize a timestamp string by removing the seconds component.
+    Handles cross-version compatibility: a peer running an older app version
+    may send timestamps like '02:30:45 PM' in its Ready broadcast; this
+    receiver displays them as '02:30 PM'. If the input already has no seconds
+    (or doesn't match the pattern), returns it unchanged."""
+    return re.sub(r"(\d{1,2}:\d{2}):\d{2}(\s*[AaPp][Mm])", r"\1\2", ts)
+
+
+def _today_iso() -> str:
+    """Local date as YYYY-MM-DD. Used as the persistent-log day key."""
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def detect_local_ip() -> str:
@@ -925,7 +947,9 @@ class MessageClient:
             "from": self.label,
             "to": targets,
             "message": text,
-            "timestamp": now_str(),
+            # Broadcast the short HH:MM timestamp so newer peers display it
+            # cleanly. Older peers will accept the shorter string unchanged.
+            "timestamp": now_str_short(),
             "alert_sound": alert_sound,
             "alert_volume": alert_volume,
         }
@@ -1286,6 +1310,11 @@ class ChairsideReadyAlertApp:
         self._build_ui()
         self._load_config_into_form()
         self._sync_autostart_state()
+        # Restore today's Ready log (if any) and start the daily-rollover timer.
+        # Must run after _build_ui creates self.log and _load_config_into_form
+        # → _apply_theme has configured the recent1/recent2 tags.
+        self._load_ready_log()
+        self.root.after(60_000, self._check_log_rollover)
         # Delay tray startup on macOS until event loop/UI is settled; early startup can be flaky.
         self.root.after(450, self._ensure_tray_icon_started)
         # Backup persistence: some Windows Tk builds are flaky on <<ComboboxSelected>> for readonly comboboxes.
@@ -3521,11 +3550,139 @@ class ChairsideReadyAlertApp:
             self._diag_text.configure(state="disabled")
 
     def _append_ready_log(self, text: str) -> None:
-        """Main panel: only Ready traffic (timestamp + text)."""
+        """Main panel: only Ready traffic (timestamp + text). Outgoing path —
+        no visual emphasis, but the line is persisted to ready_log.txt so it
+        survives an app close / system restart within the same calendar day."""
         self.log.configure(state="normal")
         self.log.insert("end", text.rstrip() + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+        self._persist_ready_log_line(text)
+
+    # ---------- Persistent Ready log (survives restart, resets daily) ----------
+    #
+    # On-disk format is a tiny plain-text file at <user_data_dir>/ready_log.txt:
+    #
+    #     DATE:2026-05-16
+    #     [02:30 PM] Room 1: Ready
+    #     [02:47 PM] Dr. Pat → Room 2: Ready
+    #
+    # On launch, the file is read: if the header date matches today's local
+    # date, the body lines are restored into the Text widget as plain (older-
+    # tier) entries. If the date differs, the file is removed and the log
+    # starts empty. While running, a 60-second timer detects when the local
+    # date rolls over (midnight or DST adjustment) and clears both the widget
+    # and the file. This works the same on macOS and Windows because it uses
+    # only the standard library and the existing _user_data_dir() helper.
+
+    def _ready_log_path(self) -> str:
+        return os.path.join(_user_data_dir(), "ready_log.txt")
+
+    def _persist_ready_log_line(self, text: str) -> None:
+        """Append one log line to ready_log.txt, writing a fresh DATE header
+        first if the previous file is from an earlier day (or doesn't exist).
+        Best-effort: filesystem errors are swallowed."""
+        path = self._ready_log_path()
+        today = _today_iso()
+        line = text.rstrip()
+        if not line:
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            existing_date = self._read_ready_log_date(path)
+            if existing_date != today:
+                # Rewrite with today's header (truncates any stale content).
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(f"DATE:{today}\n")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _read_ready_log_date(path: str) -> Optional[str]:
+        """Return the YYYY-MM-DD value from the file's DATE: header, or None
+        if the file is missing or malformed."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                first = f.readline()
+        except OSError:
+            return None
+        if not first.startswith("DATE:"):
+            return None
+        value = first[len("DATE:"):].strip()
+        return value or None
+
+    def _load_ready_log(self) -> None:
+        """Restore today's persisted Ready log into the Text widget on launch.
+        Called once after the UI is built. Stale (older-day) logs are deleted
+        so the new session starts clean. Restored lines do NOT receive the
+        recent1/recent2 emphasis — they're cold entries from before, not new
+        arrivals."""
+        path = self._ready_log_path()
+        today = _today_iso()
+        self._last_log_date = today  # baseline for the rollover check
+        existing_date = self._read_ready_log_date(path)
+        if existing_date is None:
+            return
+        if existing_date != today:
+            # Yesterday (or older) — drop it.
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            return
+        if len(lines) < 2:
+            return  # Just a header, no body.
+        self.log.configure(state="normal")
+        try:
+            for line in lines[1:]:
+                if line:
+                    self.log.insert("end", line + "\n")
+            self.log.see("end")
+        finally:
+            self.log.configure(state="disabled")
+
+    def _check_log_rollover(self) -> None:
+        """Periodic (every 60s) check that the in-memory log + persistent file
+        get wiped clean when the local calendar date changes. Handles both
+        'app left running across midnight' and DST adjustments."""
+        try:
+            today = _today_iso()
+            last = getattr(self, "_last_log_date", today)
+            if today != last:
+                # New day — clear widget content.
+                self.log.configure(state="normal")
+                try:
+                    self.log.delete("1.0", "end")
+                finally:
+                    self.log.configure(state="disabled")
+                # Drop the recent1/recent2 tracking marks; nothing to point at.
+                for name in ("recent1_start", "recent1_end",
+                             "recent2_start", "recent2_end"):
+                    try:
+                        self.log.mark_unset(name)
+                    except tk.TclError:
+                        pass
+                # Wipe the persistent file — next append will rewrite the header.
+                try:
+                    os.remove(self._ready_log_path())
+                except OSError:
+                    pass
+                self._last_log_date = today
+        except Exception:
+            pass  # Never let a clock glitch crash the UI loop.
+        finally:
+            try:
+                self.root.after(60_000, self._check_log_rollover)
+            except tk.TclError:
+                pass
+    # ---------- end persistent ready log ----------
 
     def _append_incoming_ready_log(self, text: str) -> None:
         """Append an INCOMING Ready with visual emphasis on the newest line.
@@ -3596,6 +3753,8 @@ class ChairsideReadyAlertApp:
 
         # Fire the background-color flash animation.
         self._animate_recent1_flash()
+        # Persist so the line survives a restart within the same calendar day.
+        self._persist_ready_log_line(text)
 
     @staticmethod
     def _lerp_hex_color(c1: str, c2: str, t: float) -> str:
@@ -3871,7 +4030,7 @@ class ChairsideReadyAlertApp:
             messagebox.showwarning(APP_TITLE, "Not connected to that station yet — try again in a few seconds.")
             return
         client.send_chat(targets, message, self.alert_sound_var.get(), int(self.alert_volume_var.get()))
-        self._append_ready_log(f"[{now_str()}] Ready → {', '.join(targets)}")
+        self._append_ready_log(f"[{now_str_short()}] Ready → {', '.join(targets)}")
 
     def send_ready_all(self) -> None:
         if not self._network_running or not self.peer_clients:
@@ -3885,7 +4044,7 @@ class ChairsideReadyAlertApp:
             messagebox.showwarning(APP_TITLE, "No peer connection available yet.")
             return
         client.send_chat(["ALL"], message)
-        self._append_ready_log(f"[{now_str()}] Ready → All")
+        self._append_ready_log(f"[{now_str_short()}] Ready → All")
 
     def _process_ui_queue(self) -> None:
         while True:
@@ -3935,7 +4094,10 @@ class ChairsideReadyAlertApp:
         if msg_type == "chat":
             sender = payload.get("from", "Unknown")
             text = payload.get("message", "")
-            ts = payload.get("timestamp", now_str())
+            # Sender's clock provides the timestamp; fall back to ours if missing.
+            # Strip any seconds component for the Ready log (older peers on a
+            # pre-1.0.38 build still broadcast HH:MM:SS).
+            ts = _strip_seconds_from_ts(payload.get("timestamp") or now_str_short())
             me = self.label_var.get()
             targets = payload.get("to", [])
             if "ALL" in targets or me in targets:
